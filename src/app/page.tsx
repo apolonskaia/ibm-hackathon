@@ -1,16 +1,99 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Loading } from '@/components/ui/loading';
+import { Message } from '@/types';
 
-type SkillLevel = 'beginner' | 'intermediate' | 'advanced';
+function calculateProgress(messages: Message[], maxQuestions: number): number {
+  const answeredQuestionCount = messages.filter((message) => message.role === 'user').length;
+  return Math.min(100, Math.round((answeredQuestionCount / maxQuestions) * 100));
+}
 
 export default function Home() {
   const router = useRouter();
-  const [skillLevel, setSkillLevel] = useState<SkillLevel>('intermediate');
   const [projectIdea, setProjectIdea] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [currentAnswer, setCurrentAnswer] = useState('');
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [isLoadingQuestion, setIsLoadingQuestion] = useState(false);
+  const [isSavingAnswer, setIsSavingAnswer] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const maxQuestions = 5;
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoadingQuestion]);
+
+  useEffect(() => {
+    setProgress(calculateProgress(messages, maxQuestions));
+  }, [messages]);
+
+  const loadNextQuestion = useCallback(async (targetProjectId?: string) => {
+    const activeProjectId = targetProjectId ?? projectId;
+
+    if (!activeProjectId) {
+      return;
+    }
+
+    setIsLoadingQuestion(true);
+    setError('');
+
+    try {
+      const response = await fetch('/api/clarify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: activeProjectId }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to load question');
+      }
+
+      const data = await response.json();
+
+      if (data.isComplete) {
+        setIsComplete(true);
+        setProgress(100);
+        return;
+      }
+
+      const questionMessage: Message = {
+        id: data.question.id,
+        projectId: activeProjectId,
+        role: 'assistant',
+        content: data.question.question,
+        timestamp: new Date().toISOString(),
+      };
+
+      setMessages((prev) => {
+        const lastMessage = prev[prev.length - 1];
+
+        if (lastMessage?.role === 'assistant' && lastMessage.content === questionMessage.content) {
+          return prev;
+        }
+
+        if (prev.some((message) => message.id === questionMessage.id)) {
+          return prev;
+        }
+
+        return [...prev, questionMessage];
+      });
+      setIsComplete(false);
+    } catch (err) {
+      setError('Failed to load question. Please try again.');
+      console.error(err);
+    } finally {
+      setIsLoadingQuestion(false);
+    }
+  }, [projectId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,7 +109,7 @@ export default function Home() {
       return;
     }
 
-    setIsLoading(true);
+    setIsCreatingProject(true);
 
     try {
       const response = await fetch('/api/projects', {
@@ -37,7 +120,6 @@ export default function Home() {
         body: JSON.stringify({
           name: projectIdea.substring(0, 100),
           description: projectIdea,
-          skillLevel,
         }),
       });
 
@@ -46,12 +128,96 @@ export default function Home() {
       }
 
       const data = await response.json();
-      router.push(`/project/${data.id}/clarify`);
+      setProjectId(data.id);
+      setMessages([]);
+      setCurrentAnswer('');
+      setIsComplete(false);
+      setProgress(0);
+      await loadNextQuestion(data.id);
     } catch (err) {
       setError('Failed to start project. Please try again.');
-      setIsLoading(false);
+      console.error(err);
+    } finally {
+      setIsCreatingProject(false);
     }
   };
+
+  const handleSubmitAnswer = async () => {
+    if (!projectId) {
+      setError('Project not initialized. Please start again.');
+      return;
+    }
+
+    if (!currentAnswer.trim()) {
+      setError('Please provide an answer');
+      return;
+    }
+
+    setError('');
+    setIsSavingAnswer(true);
+
+    const answerMessage: Message = {
+      id: `answer_${Date.now()}`,
+      projectId,
+      role: 'user',
+      content: currentAnswer,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, answerMessage]);
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/conversations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: 'user',
+          content: currentAnswer,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save answer');
+      }
+
+      setCurrentAnswer('');
+      await loadNextQuestion(projectId);
+    } catch (err) {
+      setError('Failed to save answer. Please try again.');
+      console.error(err);
+    } finally {
+      setIsSavingAnswer(false);
+    }
+  };
+
+  const handleComplete = async () => {
+    if (!projectId) {
+      return;
+    }
+
+    setIsCompleting(true);
+    setError('');
+
+    try {
+      const response = await fetch('/api/clarify/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to complete clarification');
+      }
+
+      router.push(`/project/${projectId}/architecture`);
+    } catch (err) {
+      setError('Failed to complete clarification. Please try again.');
+      console.error(err);
+      setIsCompleting(false);
+    }
+  };
+
+  const isBusy = isCreatingProject || isLoadingQuestion || isSavingAnswer || isCompleting;
 
   return (
     <div className="container mx-auto px-4 py-12">
@@ -114,61 +280,13 @@ export default function Home() {
       {/* Main Form */}
       <div className="max-w-3xl mx-auto bg-white rounded-lg shadow-lg p-8">
         <form onSubmit={handleSubmit}>
-          {/* Skill Level Selection */}
-          <div className="mb-8">
-            <label className="block text-sm font-medium text-gray-700 mb-4">
-              Select Your Skill Level
-            </label>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {[
-                {
-                  value: 'beginner' as SkillLevel,
-                  title: 'Beginner',
-                  description: 'New to system design',
-                  icon: '🌱',
-                },
-                {
-                  value: 'intermediate' as SkillLevel,
-                  title: 'Intermediate',
-                  description: 'Some experience',
-                  icon: '🚀',
-                },
-                {
-                  value: 'advanced' as SkillLevel,
-                  title: 'Advanced',
-                  description: 'Expert level',
-                  icon: '⚡',
-                },
-              ].map((level) => (
-                <button
-                  key={level.value}
-                  type="button"
-                  onClick={() => setSkillLevel(level.value)}
-                  className={`p-4 border-2 rounded-lg text-left transition-all ${
-                    skillLevel === level.value
-                      ? 'border-blue-600 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="text-2xl mb-2">{level.icon}</div>
-                  <div className="font-semibold text-gray-900">
-                    {level.title}
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    {level.description}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
           {/* Project Idea Input */}
           <div className="mb-6">
             <label
               htmlFor="projectIdea"
               className="block text-sm font-medium text-gray-700 mb-2"
             >
-              Describe Your Project Idea
+              Describe What You Want to Build
             </label>
             <textarea
               id="projectIdea"
@@ -177,7 +295,7 @@ export default function Home() {
               placeholder="Example: I want to build a real-time chat application that supports group conversations, file sharing, and video calls. It should handle thousands of concurrent users and work on both web and mobile platforms..."
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               rows={6}
-              disabled={isLoading}
+              disabled={projectId !== null || isBusy}
             />
             <div className="flex justify-between items-center mt-2">
               <span
@@ -190,6 +308,9 @@ export default function Home() {
                 }`}
               >
                 {projectIdea.length} / 500 characters (min 50)
+              </span>
+              <span className="text-sm text-gray-500">
+                Explanations default to beginner-friendly language.
               </span>
             </div>
           </div>
@@ -204,10 +325,10 @@ export default function Home() {
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={isLoading || projectIdea.length < 50}
+            disabled={projectId !== null || isBusy || projectIdea.length < 50}
             className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
           >
-            {isLoading ? (
+            {isCreatingProject ? (
               <span className="flex items-center justify-center">
                 <svg
                   className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
@@ -229,14 +350,144 @@ export default function Home() {
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   ></path>
                 </svg>
-                Starting Design Process...
+                Starting Clarification...
               </span>
             ) : (
-              'Start Design Process'
+              'Start Clarification'
             )}
           </button>
         </form>
       </div>
+
+      {projectId && (
+        <div className="max-w-3xl mx-auto mt-8 space-y-6">
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Clarification Dialog</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  We’ll keep this on the same page and ask only for the details needed to generate good design options.
+                </p>
+              </div>
+              <span className="text-sm text-gray-600">{progress}% Complete</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="space-y-4 max-h-[500px] overflow-y-auto">
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[80%] rounded-lg px-4 py-3 ${
+                        message.role === 'user'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-900'
+                      }`}
+                    >
+                      {message.role === 'assistant' && (
+                        <div className="flex items-center mb-2">
+                          <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z" />
+                            <path d="M15 7v2a4 4 0 01-4 4H9.828l-1.766 1.767c.28.149.599.233.938.233h2l3 3v-3h2a2 2 0 002-2V9a2 2 0 00-2-2h-1z" />
+                          </svg>
+                          <span className="font-semibold text-sm">AI Assistant</span>
+                        </div>
+                      )}
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                    </div>
+                  </div>
+                ))}
+
+                {isLoadingQuestion && !isComplete && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-100 rounded-lg px-4 py-3">
+                      <Loading size="sm" text="Thinking..." />
+                    </div>
+                  </div>
+                )}
+
+                <div ref={messagesEndRef} />
+              </div>
+            </CardContent>
+          </Card>
+
+          {error && (
+            <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+              {error}
+            </div>
+          )}
+
+          {!isComplete ? (
+            <Card>
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <textarea
+                    value={currentAnswer}
+                    onChange={(e) => setCurrentAnswer(e.target.value)}
+                    placeholder="Reply briefly. You can also say things like 'decide yourself', 'use best practices', or 'show me options with justifications'."
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    rows={4}
+                    disabled={isBusy}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.ctrlKey) {
+                        void handleSubmitAnswer();
+                      }
+                    }}
+                  />
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-500">
+                      Keep answers brief. Focus on functionality, users, integrations, platform, and rough scale.
+                    </span>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => {
+                          setProgress(100);
+                          setIsComplete(true);
+                        }}
+                        variant="outline"
+                        disabled={isBusy}
+                      >
+                        Skip to Architecture
+                      </Button>
+                      <Button
+                        onClick={handleSubmitAnswer}
+                        disabled={isBusy || !currentAnswer.trim()}
+                        isLoading={isSavingAnswer}
+                      >
+                        Submit Answer
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardContent className="p-6 text-center">
+                <div className="mb-4">
+                  <svg className="w-16 h-16 text-green-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Clarification Complete!</h2>
+                <p className="text-gray-600 mb-6">
+                  We have enough information to generate architecture options for your project.
+                </p>
+                <Button onClick={handleComplete} isLoading={isCompleting} size="lg">
+                  Generate Architecture Options
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* Features Section */}
       <div className="max-w-6xl mx-auto mt-20 grid grid-cols-1 md:grid-cols-3 gap-8">

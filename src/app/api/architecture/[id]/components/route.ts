@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getArchitecture } from '@/lib/database';
+import { getArchitecture, getArchitectureComponents, getProject, saveArchitectureComponents } from '@/lib/database';
 import { generateComponentBreakdown } from '@/lib/watsonx-client';
 import { APIError } from '@/types';
 
@@ -22,17 +22,32 @@ export async function GET(
       
       return NextResponse.json(errorResponse, { status: 404 });
     }
+
+    const project = getProject(architecture.projectId);
+    const cachedComponents = getArchitectureComponents(architecture.id);
+
+    if (cachedComponents.length > 0) {
+      return NextResponse.json({
+        components: cachedComponents,
+        count: cachedComponents.length,
+        cached: true,
+      });
+    }
     
     // Generate component breakdown using watsonx.ai
     const components = await generateComponentBreakdown(
       architecture.name,
       architecture.techStack,
-      architecture.overview
+      architecture.overview,
+      project?.skillLevel ?? 'beginner'
     );
+
+    saveArchitectureComponents(architecture.id, components);
     
     return NextResponse.json({
       components,
       count: components.length,
+      cached: false,
     });
   } catch (error) {
     console.error('Error fetching components:', error);

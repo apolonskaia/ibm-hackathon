@@ -9,10 +9,13 @@ import {
   Message,
   ArchitectureOption,
   ExportResult,
+  ProjectHistorySummary,
   SkillLevel,
   ProjectStatus,
   MessageRole,
-  ExportFormat
+  ExportFormat,
+  Component,
+  Justification
 } from '@/types';
 
 // Database file path
@@ -54,10 +57,18 @@ function initializeSchema(): void {
       description TEXT NOT NULL,
       skill_level TEXT NOT NULL CHECK(skill_level IN ('beginner', 'intermediate', 'advanced')),
       status TEXT NOT NULL CHECK(status IN ('created', 'clarifying', 'generating_options', 'selecting_architecture', 'designing', 'completed')),
+      requirements TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `);
+  
+  // Add requirements column if it doesn't exist (for existing databases)
+  try {
+    db.exec(`ALTER TABLE projects ADD COLUMN requirements TEXT`);
+  } catch (e) {
+    // Column already exists, ignore error
+  }
 
   // Conversations table
   db.exec(`
@@ -85,11 +96,25 @@ function initializeSchema(): void {
       complexity TEXT NOT NULL CHECK(complexity IN ('low', 'medium', 'high')),
       estimated_cost TEXT NOT NULL CHECK(estimated_cost IN ('low', 'medium', 'high')),
       diagram TEXT,
+      component_cache TEXT,
+      justification_cache TEXT,
       selected INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     )
   `);
+
+  try {
+    db.exec(`ALTER TABLE architectures ADD COLUMN component_cache TEXT`);
+  } catch (e) {
+    // Column already exists, ignore error
+  }
+
+  try {
+    db.exec(`ALTER TABLE architectures ADD COLUMN justification_cache TEXT`);
+  } catch (e) {
+    // Column already exists, ignore error
+  }
 
   // Exports table
   db.exec(`
@@ -124,6 +149,7 @@ function dbProjectToProject(dbProject: DBProject): Project {
     description: dbProject.description,
     skillLevel: dbProject.skill_level as SkillLevel,
     status: dbProject.status as ProjectStatus,
+    requirements: dbProject.requirements ? JSON.parse(dbProject.requirements) : undefined,
     createdAt: dbProject.created_at,
     updatedAt: dbProject.updated_at,
   };
@@ -215,6 +241,64 @@ export function getAllProjects(): Project[] {
   return rows.map(dbProjectToProject);
 }
 
+function getProjectResumePath(project: Project, architectureCount: number, hasSelectedArchitecture: boolean): string {
+  if (hasSelectedArchitecture || project.status === 'designing' || project.status === 'completed') {
+    return `/project/${project.id}/design`;
+  }
+
+  if (architectureCount > 0 || project.status === 'selecting_architecture' || project.status === 'generating_options') {
+    return `/project/${project.id}/architecture`;
+  }
+
+  return `/project/${project.id}/clarify`;
+}
+
+export function getProjectHistorySummaries(): ProjectHistorySummary[] {
+  const db = getDatabase();
+  const projects = getAllProjects();
+
+  const conversationCountStmt = db.prepare('SELECT COUNT(*) as count FROM conversations WHERE project_id = ?');
+  const answeredQuestionCountStmt = db.prepare("SELECT COUNT(*) as count FROM conversations WHERE project_id = ? AND role = 'user'");
+  const architectureCountStmt = db.prepare('SELECT COUNT(*) as count FROM architectures WHERE project_id = ?');
+  const exportCountStmt = db.prepare('SELECT COUNT(*) as count FROM exports WHERE project_id = ?');
+  const selectedArchitectureStmt = db.prepare(`
+    SELECT id, name, description, created_at
+    FROM architectures
+    WHERE project_id = ? AND selected = 1
+    LIMIT 1
+  `);
+
+  return projects.map((project) => {
+    const conversationCount = (conversationCountStmt.get(project.id) as { count: number }).count;
+    const answeredQuestionCount = (answeredQuestionCountStmt.get(project.id) as { count: number }).count;
+    const architectureCount = (architectureCountStmt.get(project.id) as { count: number }).count;
+    const exportCount = (exportCountStmt.get(project.id) as { count: number }).count;
+    const selectedArchitectureRow = selectedArchitectureStmt.get(project.id) as
+      | { id: string; name: string; description: string; created_at: string }
+      | undefined;
+
+    const selectedArchitecture = selectedArchitectureRow
+      ? {
+          id: selectedArchitectureRow.id,
+          name: selectedArchitectureRow.name,
+          description: selectedArchitectureRow.description,
+          createdAt: selectedArchitectureRow.created_at,
+        }
+      : undefined;
+
+    return {
+      project,
+      conversationCount,
+      answeredQuestionCount,
+      architectureCount,
+      exportCount,
+      hasRequirements: Boolean(project.requirements),
+      selectedArchitecture,
+      resumePath: getProjectResumePath(project, architectureCount, Boolean(selectedArchitecture)),
+    };
+  });
+}
+
 export function updateProject(id: string, updates: Partial<Project>): boolean {
   const db = getDatabase();
   const now = new Date().toISOString();
@@ -237,6 +321,10 @@ export function updateProject(id: string, updates: Partial<Project>): boolean {
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  if (updates.requirements !== undefined) {
+    fields.push('requirements = ?');
+    values.push(JSON.stringify(updates.requirements));
   }
 
   if (fields.length === 0) return false;
@@ -347,6 +435,13 @@ export function getArchitecture(id: string): ArchitectureOption | null {
   return row ? dbArchitectureToOption(row) : null;
 }
 
+export function deleteArchitectures(projectId: string): boolean {
+  const db = getDatabase();
+  const stmt = db.prepare('DELETE FROM architectures WHERE project_id = ?');
+  const result = stmt.run(projectId);
+  return result.changes > 0;
+}
+
 export function selectArchitecture(projectId: string, architectureId: string): boolean {
   const db = getDatabase();
   
@@ -390,6 +485,54 @@ export function updateArchitecture(id: string, updates: Partial<ArchitectureOpti
 
   const stmt = db.prepare(`UPDATE architectures SET ${fields.join(', ')} WHERE id = ?`);
   const result = stmt.run(...values);
+  return result.changes > 0;
+}
+
+export function getArchitectureComponents(architectureId: string): Component[] {
+  const db = getDatabase();
+  const stmt = db.prepare('SELECT component_cache FROM architectures WHERE id = ?');
+  const row = stmt.get(architectureId) as { component_cache?: string | null } | undefined;
+
+  if (!row?.component_cache) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(row.component_cache) as Component[];
+  } catch (error) {
+    console.error('Failed to parse cached components:', error);
+    return [];
+  }
+}
+
+export function saveArchitectureComponents(architectureId: string, components: Component[]): boolean {
+  const db = getDatabase();
+  const stmt = db.prepare('UPDATE architectures SET component_cache = ? WHERE id = ?');
+  const result = stmt.run(JSON.stringify(components), architectureId);
+  return result.changes > 0;
+}
+
+export function getArchitectureJustifications(architectureId: string): Justification[] {
+  const db = getDatabase();
+  const stmt = db.prepare('SELECT justification_cache FROM architectures WHERE id = ?');
+  const row = stmt.get(architectureId) as { justification_cache?: string | null } | undefined;
+
+  if (!row?.justification_cache) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(row.justification_cache) as Justification[];
+  } catch (error) {
+    console.error('Failed to parse cached justifications:', error);
+    return [];
+  }
+}
+
+export function saveArchitectureJustifications(architectureId: string, justifications: Justification[]): boolean {
+  const db = getDatabase();
+  const stmt = db.prepare('UPDATE architectures SET justification_cache = ? WHERE id = ?');
+  const result = stmt.run(JSON.stringify(justifications), architectureId);
   return result.changes > 0;
 }
 

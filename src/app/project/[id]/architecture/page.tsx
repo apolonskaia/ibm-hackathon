@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
@@ -19,27 +19,27 @@ export default function ArchitecturePage() {
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   
-  useEffect(() => {
-    generateOptions();
-  }, []);
-  
-  const generateOptions = async () => {
+  const generateOptions = useCallback(async (requirementsOverride?: unknown) => {
     setIsLoading(true);
     setError('');
     
     try {
-      // First, complete clarification to get requirements
-      const clarifyResponse = await fetch('/api/clarify/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId }),
-      });
-      
-      if (!clarifyResponse.ok) {
-        throw new Error('Failed to get requirements');
+      let requirements = requirementsOverride;
+
+      if (!requirements) {
+        const projectResponse = await fetch(`/api/projects/${projectId}`);
+
+        if (!projectResponse.ok) {
+          throw new Error('Failed to get project');
+        }
+
+        const { project } = await projectResponse.json();
+        requirements = project.requirements;
       }
-      
-      const { summary } = await clarifyResponse.json();
+
+      if (!requirements) {
+        throw new Error('Requirements not found. Please complete clarification first.');
+      }
       
       // Generate architecture options
       const archResponse = await fetch('/api/architecture/generate', {
@@ -47,7 +47,7 @@ export default function ArchitecturePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId,
-          requirements: summary,
+          requirements,
         }),
       });
       
@@ -62,8 +62,41 @@ export default function ArchitecturePage() {
       console.error(err);
     } finally {
       setIsLoading(false);
+      setIsGenerating(false);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    const loadOptions = async () => {
+      setIsLoading(true);
+      setError('');
+
+      const projectResponse = await fetch(`/api/projects/${projectId}`);
+
+      if (!projectResponse.ok) {
+        setError('Failed to load project. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+
+      const { project, architectures } = await projectResponse.json();
+
+      if (architectures.length > 0) {
+        setOptions(architectures);
+        setIsLoading(false);
+        return;
+      }
+
+      if (project.requirements) {
+        await generateOptions(project.requirements);
+        return;
+      }
+
+      setIsLoading(false);
+    };
+
+    void loadOptions();
+  }, [generateOptions, projectId]);
   
   const handleSelectArchitecture = async (architectureId: string) => {
     setIsSelecting(true);
@@ -123,7 +156,7 @@ export default function ArchitecturePage() {
           Choose Your Architecture
         </h1>
         <p className="text-gray-600">
-          We've generated {options.length} architecture options based on your requirements. 
+          We&apos;ve generated {options.length} architecture options based on your requirements.
           Review each option and select the one that best fits your needs.
         </p>
       </div>
@@ -178,24 +211,14 @@ export default function ArchitecturePage() {
                 <div>
                   <h4 className="font-semibold text-sm text-gray-700 mb-2">Tech Stack</h4>
                   <div className="space-y-2 text-sm">
-                    {option.techStack.frontend && option.techStack.frontend.length > 0 && (
-                      <div>
-                        <span className="font-medium text-gray-600">Frontend:</span>{' '}
-                        <span className="text-gray-700">{option.techStack.frontend.join(', ')}</span>
-                      </div>
-                    )}
-                    {option.techStack.backend && option.techStack.backend.length > 0 && (
-                      <div>
-                        <span className="font-medium text-gray-600">Backend:</span>{' '}
-                        <span className="text-gray-700">{option.techStack.backend.join(', ')}</span>
-                      </div>
-                    )}
-                    {option.techStack.database && option.techStack.database.length > 0 && (
-                      <div>
-                        <span className="font-medium text-gray-600">Database:</span>{' '}
-                        <span className="text-gray-700">{option.techStack.database.join(', ')}</span>
-                      </div>
-                    )}
+                    {Object.entries(option.techStack).map(([category, technologies]) => (
+                      Array.isArray(technologies) && technologies.length > 0 ? (
+                        <div key={category}>
+                          <span className="font-medium text-gray-600 capitalize">{category.replace(/_/g, ' ')}:</span>{' '}
+                          <span className="text-gray-700">{technologies.join(', ')}</span>
+                        </div>
+                      ) : null
+                    ))}
                   </div>
                 </div>
                 

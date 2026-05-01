@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProject, updateProject, createArchitecture } from '@/lib/database';
+import { getProject, updateProject, createArchitecture, deleteArchitectures } from '@/lib/database';
 import { generateArchitectureOptions, generateMermaidDiagram } from '@/lib/watsonx-client';
 import { GenerateArchitectureRequest, GenerateArchitectureResponse, APIError } from '@/types';
 
@@ -39,6 +39,9 @@ export async function POST(request: NextRequest) {
       requirements,
       project.skillLevel
     );
+
+    // Replace any previously generated options for this project instead of appending.
+    deleteArchitectures(projectId);
     
     // Save options to database and generate diagrams
     const savedOptions = await Promise.all(
@@ -46,12 +49,9 @@ export async function POST(request: NextRequest) {
         // Generate Mermaid diagram for this option
         let diagram: string | undefined;
         try {
-          const components = [
-            ...(option.techStack.frontend || []),
-            ...(option.techStack.backend || []),
-            ...(option.techStack.database || []),
-            ...(option.techStack.infrastructure || []),
-          ];
+          const components = Object.values(option.techStack || {})
+            .filter((value): value is string[] => Array.isArray(value))
+            .flat();
           
           diagram = await generateMermaidDiagram(
             option.name,

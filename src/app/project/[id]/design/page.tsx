@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { LoadingPage } from '@/components/ui/loading';
+import { Loading, LoadingPage } from '@/components/ui/loading';
 import { MermaidDiagram } from '@/components/visualization/mermaid-diagram';
-import { ArchitectureOption } from '@/types';
+import { ArchitectureOption, Component, Justification } from '@/types';
+
+type DesignTab = 'overview' | 'justifications';
 
 export default function DesignPage() {
   const router = useRouter();
@@ -14,159 +16,95 @@ export default function DesignPage() {
   const projectId = params.id as string;
   
   const [architecture, setArchitecture] = useState<ArchitectureOption | null>(null);
-  const [components, setComponents] = useState<any[]>([]);
-  const [justifications, setJustifications] = useState<any[]>([]);
+  const [components, setComponents] = useState<Component[]>([]);
+  const [justifications, setJustifications] = useState<Justification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingComponents, setIsLoadingComponents] = useState(false);
+  const [isLoadingJustifications, setIsLoadingJustifications] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState<'overview' | 'components' | 'justifications'>('overview');
-  
-  useEffect(() => {
-    loadArchitectureDetails();
-  }, []);
-  
-  const loadArchitectureDetails = async () => {
-    setIsLoading(true);
-    setError('');
-    
+  const [activeTab, setActiveTab] = useState<DesignTab>('overview');
+
+  const loadComponents = useCallback(async (selectedArchitecture: ArchitectureOption) => {
+    setIsLoadingComponents(true);
+
     try {
-      // Get selected architecture
-      const projectResponse = await fetch(`/api/projects/${projectId}`);
-      if (!projectResponse.ok) throw new Error('Failed to load project');
-      
-      const { project } = await projectResponse.json();
-      
-      // Get architectures for this project
-      const archResponse = await fetch(`/api/projects/${projectId}`);
-      // Note: In a real implementation, we'd have an endpoint to get architectures
-      // For now, we'll simulate this
-      
-      // Mock selected architecture (in production, fetch from database)
-      const mockArchitecture: ArchitectureOption = {
-        id: 'arch_1',
-        projectId,
-        name: 'Microservices Architecture',
-        description: 'Scalable microservices-based system',
-        overview: 'A distributed system architecture using microservices pattern for better scalability and maintainability.',
-        techStack: {
-          frontend: ['React', 'TypeScript', 'Tailwind CSS'],
-          backend: ['Node.js', 'Express', 'TypeScript'],
-          database: ['PostgreSQL', 'Redis'],
-          infrastructure: ['Docker', 'Kubernetes', 'AWS'],
-        },
-        pros: ['Highly scalable', 'Independent deployment', 'Technology flexibility'],
-        cons: ['Complex infrastructure', 'Distributed system challenges', 'Higher operational overhead'],
-        complexity: 'high',
-        estimatedCost: 'medium',
-        diagram: `graph TB
-    Client[Client Application]
-    Gateway[API Gateway]
-    Auth[Auth Service]
-    User[User Service]
-    Product[Product Service]
-    Order[Order Service]
-    DB1[(User DB)]
-    DB2[(Product DB)]
-    DB3[(Order DB)]
-    Cache[Redis Cache]
-    
-    Client --> Gateway
-    Gateway --> Auth
-    Gateway --> User
-    Gateway --> Product
-    Gateway --> Order
-    
-    User --> DB1
-    Product --> DB2
-    Order --> DB3
-    
-    User --> Cache
-    Product --> Cache`,
-        selected: true,
-        createdAt: new Date().toISOString(),
-      };
-      
-      setArchitecture(mockArchitecture);
-      
-      // Load components
-      const mockComponents = [
-        {
-          name: 'API Gateway',
-          type: 'backend',
-          description: 'Central entry point for all client requests',
-          responsibilities: ['Request routing', 'Authentication', 'Rate limiting'],
-          technologies: ['Node.js', 'Express'],
-          dependencies: ['Auth Service', 'User Service'],
-        },
-        {
-          name: 'Auth Service',
-          type: 'backend',
-          description: 'Handles authentication and authorization',
-          responsibilities: ['User authentication', 'Token management', 'Permission checks'],
-          technologies: ['Node.js', 'JWT', 'bcrypt'],
-          dependencies: ['User Database'],
-        },
-        {
-          name: 'User Service',
-          type: 'backend',
-          description: 'Manages user data and profiles',
-          responsibilities: ['User CRUD operations', 'Profile management'],
-          technologies: ['Node.js', 'TypeScript'],
-          dependencies: ['User Database', 'Redis Cache'],
-        },
-      ];
-      
-      setComponents(mockComponents);
-      
-      // Load justifications
-      const mockJustifications = [
-        {
-          category: 'technology',
-          decision: 'Node.js for backend services',
-          reasoning: 'Provides excellent performance for I/O-heavy operations and has a rich ecosystem',
-          alternatives: [
-            {
-              name: 'Python/Django',
-              description: 'Mature framework with batteries included',
-              whyNotChosen: 'Slower performance for real-time operations',
-            },
-          ],
-          tradeoffs: [
-            {
-              aspect: 'Performance',
-              benefit: 'Fast I/O operations',
-              cost: 'Single-threaded nature',
-            },
-          ],
-        },
-        {
-          category: 'pattern',
-          decision: 'Microservices architecture',
-          reasoning: 'Enables independent scaling and deployment of services',
-          alternatives: [
-            {
-              name: 'Monolithic',
-              description: 'Single unified application',
-              whyNotChosen: 'Limited scalability and deployment flexibility',
-            },
-          ],
-          tradeoffs: [
-            {
-              aspect: 'Complexity',
-              benefit: 'Better separation of concerns',
-              cost: 'More complex infrastructure',
-            },
-          ],
-        },
-      ];
-      
-      setJustifications(mockJustifications);
+      const response = await fetch(`/api/architecture/${selectedArchitecture.id}/components`);
+      if (!response.ok) {
+        throw new Error('Failed to load components');
+      }
+
+      const { components: generatedComponents } = await response.json();
+      setComponents(generatedComponents);
     } catch (err) {
-      setError('Failed to load architecture details. Please try again.');
+      setError('Failed to load architecture components. Please try again.');
       console.error(err);
     } finally {
-      setIsLoading(false);
+      setIsLoadingComponents(false);
     }
-  };
+  }, []);
+  
+  useEffect(() => {
+    const loadArchitectureDetails = async () => {
+      setIsLoading(true);
+      setError('');
+
+      try {
+        const projectResponse = await fetch(`/api/projects/${projectId}`);
+        if (!projectResponse.ok) {
+          throw new Error('Failed to load project');
+        }
+
+        const { architectures } = await projectResponse.json();
+        const selectedArchitecture = architectures.find((option: ArchitectureOption) => option.selected) ?? null;
+
+        setArchitecture(selectedArchitecture);
+
+        if (!selectedArchitecture) {
+          setComponents([]);
+          setJustifications([]);
+          return;
+        }
+
+        setComponents([]);
+        setJustifications([]);
+        void loadComponents(selectedArchitecture);
+      } catch (err) {
+        setError('Failed to load architecture details. Please try again.');
+        console.error(err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadArchitectureDetails();
+  }, [loadComponents, projectId]);
+
+  useEffect(() => {
+    if (activeTab !== 'justifications' || !architecture || justifications.length > 0 || isLoadingJustifications) {
+      return;
+    }
+
+    const loadJustifications = async () => {
+      setIsLoadingJustifications(true);
+
+      try {
+        const response = await fetch(`/api/architecture/${architecture.id}/justifications`);
+        if (!response.ok) {
+          throw new Error('Failed to load justifications');
+        }
+
+        const { justifications: generatedJustifications } = await response.json();
+        setJustifications(generatedJustifications);
+      } catch (err) {
+        setError('Failed to load architecture justifications. Please try again.');
+        console.error(err);
+      } finally {
+        setIsLoadingJustifications(false);
+      }
+    };
+
+    void loadJustifications();
+  }, [activeTab, architecture, isLoadingJustifications, justifications.length]);
   
   const handleExport = () => {
     router.push(`/project/${projectId}/export`);
@@ -210,12 +148,11 @@ export default function DesignPage() {
           <nav className="flex space-x-8">
             {[
               { id: 'overview', label: 'Overview' },
-              { id: 'components', label: 'Components' },
               { id: 'justifications', label: 'Justifications' },
             ].map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() => setActiveTab(tab.id as DesignTab)}
                 className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
                   activeTab === tab.id
                     ? 'border-blue-600 text-blue-600'
@@ -238,17 +175,54 @@ export default function DesignPage() {
       {/* Overview Tab */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          {/* System Diagram */}
-          {architecture.diagram && (
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,1fr)]">
+            {/* System Diagram */}
+            {architecture.diagram && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>System Architecture Diagram</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <MermaidDiagram code={architecture.diagram} />
+                </CardContent>
+              </Card>
+            )}
+
             <Card>
               <CardHeader>
-                <CardTitle>System Architecture Diagram</CardTitle>
+                <CardTitle>Key Components</CardTitle>
               </CardHeader>
               <CardContent>
-                <MermaidDiagram code={architecture.diagram} />
+                {isLoadingComponents && components.length === 0 ? (
+                  <Loading text="Loading components..." />
+                ) : components.length === 0 ? (
+                  <p className="text-sm text-gray-600">Component breakdown is not available yet.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {components.map((component, index) => (
+                      <div key={index} className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h4 className="font-semibold text-gray-900">{component.name}</h4>
+                            <p className="mt-1 text-sm text-gray-600">{component.description}</p>
+                          </div>
+                          <span className="rounded-full bg-white px-2.5 py-1 text-xs text-gray-600 border border-gray-200">
+                            {component.type}
+                          </span>
+                        </div>
+
+                        {component.dependencies.length > 0 && (
+                          <p className="mt-3 text-xs text-gray-500">
+                            Depends on: {component.dependencies.join(', ')}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
-          )}
+          </div>
           
           {/* Tech Stack */}
           <Card>
@@ -327,58 +301,25 @@ export default function DesignPage() {
         </div>
       )}
       
-      {/* Components Tab */}
-      {activeTab === 'components' && (
-        <div className="grid grid-cols-1 gap-6">
-          {components.map((component, i) => (
-            <Card key={i}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>{component.name}</CardTitle>
-                  <span className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm">
-                    {component.type}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-600 mt-2">{component.description}</p>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div>
-                    <h4 className="font-semibold text-sm text-gray-700 mb-2">Responsibilities</h4>
-                    <ul className="space-y-1 text-sm text-gray-600">
-                      {component.responsibilities.map((resp: string, j: number) => (
-                        <li key={j}>• {resp}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-sm text-gray-700 mb-2">Technologies</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {component.technologies.map((tech: string, j: number) => (
-                        <span key={j} className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
-                          {tech}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-sm text-gray-700 mb-2">Dependencies</h4>
-                    <ul className="space-y-1 text-sm text-gray-600">
-                      {component.dependencies.map((dep: string, j: number) => (
-                        <li key={j}>→ {dep}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-      
       {/* Justifications Tab */}
       {activeTab === 'justifications' && (
         <div className="space-y-6">
+          {isLoadingJustifications && (
+            <Card>
+              <CardContent className="p-8">
+                <Loading text="Generating architecture justifications..." />
+              </CardContent>
+            </Card>
+          )}
+
+          {!isLoadingJustifications && justifications.length === 0 && (
+            <Card>
+              <CardContent className="p-8 text-center text-gray-600">
+                Technical justifications are not available yet.
+              </CardContent>
+            </Card>
+          )}
+
           {justifications.map((just, i) => (
             <Card key={i}>
               <CardHeader>
@@ -400,7 +341,7 @@ export default function DesignPage() {
                     <div>
                       <h4 className="font-semibold text-sm text-gray-700 mb-2">Alternatives Considered</h4>
                       <div className="space-y-2">
-                        {just.alternatives.map((alt: any, j: number) => (
+                        {just.alternatives.map((alt, j: number) => (
                           <div key={j} className="p-3 bg-gray-50 rounded">
                             <p className="font-medium text-gray-900">{alt.name}</p>
                             <p className="text-sm text-gray-600 mt-1">{alt.description}</p>
@@ -417,7 +358,7 @@ export default function DesignPage() {
                     <div>
                       <h4 className="font-semibold text-sm text-gray-700 mb-2">Tradeoffs</h4>
                       <div className="space-y-2">
-                        {just.tradeoffs.map((tradeoff: any, j: number) => (
+                        {just.tradeoffs.map((tradeoff, j: number) => (
                           <div key={j} className="flex items-start space-x-4 p-3 bg-gray-50 rounded">
                             <div className="flex-1">
                               <p className="font-medium text-gray-900">{tradeoff.aspect}</p>

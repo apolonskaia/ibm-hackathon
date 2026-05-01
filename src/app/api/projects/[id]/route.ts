@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProject, updateProject, deleteProject } from '@/lib/database';
+import { getProject, getArchitectures, updateProject, deleteProject } from '@/lib/database';
 import { APIError } from '@/types';
 import { z } from 'zod';
 
@@ -31,7 +31,10 @@ export async function GET(
       return NextResponse.json(errorResponse, { status: 404 });
     }
     
-    return NextResponse.json({ project });
+    return NextResponse.json({
+      project,
+      architectures: getArchitectures(params.id),
+    });
   } catch (error) {
     console.error('Error fetching project:', error);
     

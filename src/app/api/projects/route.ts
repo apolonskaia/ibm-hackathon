@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createProject, getAllProjects } from '@/lib/database';
+import { createProject, getProjectHistorySummaries } from '@/lib/database';
 import { CreateProjectRequest, CreateProjectResponse, APIError } from '@/types';
 import { z } from 'zod';
 
@@ -7,7 +7,7 @@ import { z } from 'zod';
 const createProjectSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().min(50).max(500),
-  skillLevel: z.enum(['beginner', 'intermediate', 'advanced']),
+  skillLevel: z.enum(['beginner', 'intermediate', 'advanced']).optional().default('beginner'),
 });
 
 /**
@@ -16,7 +16,7 @@ const createProjectSchema = z.object({
  */
 export async function GET(request: NextRequest) {
   try {
-    const projects = getAllProjects();
+    const projects = getProjectHistorySummaries();
     
     return NextResponse.json({
       projects,

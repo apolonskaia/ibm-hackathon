@@ -57,7 +57,7 @@ export default function RootLayout({
                     href="/history"
                     className="text-gray-600 hover:text-gray-900 transition-colors"
                   >
-                    History
+                    Project History
                   </a>
                 </nav>
               </div>

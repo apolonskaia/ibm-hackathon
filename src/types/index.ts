@@ -17,8 +17,25 @@ export interface Project {
   description: string;
   skillLevel: SkillLevel;
   status: ProjectStatus;
+  requirements?: RequirementsSummary;  // Added to store clarification results
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProjectHistorySummary {
+  project: Project;
+  conversationCount: number;
+  answeredQuestionCount: number;
+  architectureCount: number;
+  exportCount: number;
+  hasRequirements: boolean;
+  selectedArchitecture?: {
+    id: string;
+    name: string;
+    description: string;
+    createdAt: string;
+  };
+  resumePath: string;
 }
 
 // Conversation message types
@@ -60,6 +77,7 @@ export interface TechStack {
   database?: string[];
   infrastructure?: string[];
   tools?: string[];
+  [category: string]: string[] | undefined;
 }
 
 export interface ArchitectureOption {
@@ -83,7 +101,7 @@ export interface Component {
   id: string;
   architectureId: string;
   name: string;
-  type: 'frontend' | 'backend' | 'database' | 'service' | 'infrastructure';
+  type: 'frontend' | 'backend' | 'database' | 'service' | 'infrastructure' | 'workflow' | 'compute' | 'storage' | 'orchestration' | 'analytics';
   description: string;
   responsibilities: string[];
   technologies: string[];
@@ -183,7 +201,7 @@ export interface ExportResult {
 export interface CreateProjectRequest {
   name: string;
   description: string;
-  skillLevel: SkillLevel;
+  skillLevel?: SkillLevel;
 }
 
 export interface CreateProjectResponse {
@@ -292,6 +310,7 @@ export interface DBProject {
   description: string;
   skill_level: SkillLevel;
   status: ProjectStatus;
+  requirements?: string;  // JSON string of RequirementsSummary
   created_at: string;
   updated_at: string;
 }
@@ -316,6 +335,8 @@ export interface DBArchitecture {
   complexity: string;
   estimated_cost: string;
   diagram: string | null;
+  component_cache?: string | null;
+  justification_cache?: string | null;
   selected: number; // SQLite boolean (0 or 1)
   created_at: string;
 }

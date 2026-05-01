@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getProject, updateProject, addMessage, getConversation } from '@/lib/database';
-import { generateClarificationQuestion } from '@/lib/watsonx-client';
+import { generateClarificationQuestion, getClarificationStrategy, hasEnoughClarificationForDesign } from '@/lib/watsonx-client';
 import { ClarifyRequest, ClarifyResponse, APIError } from '@/types';
+
+function normalizeQuestion(question: string): string {
+  return question
+    .toLowerCase()
+    .replace(/["'`]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 /**
  * POST /api/clarify
@@ -10,7 +19,7 @@ import { ClarifyRequest, ClarifyResponse, APIError } from '@/types';
 export async function POST(request: NextRequest) {
   try {
     const body: ClarifyRequest = await request.json();
-    const { projectId, previousAnswers = [] } = body;
+    const { projectId } = body;
     
     // Validate input
     if (!projectId) {
@@ -52,12 +61,35 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    const clarificationStrategy = getClarificationStrategy(project.description, qaHistory);
+    const maxQuestions = clarificationStrategy.maxQuestions;
+    const lastMessage = conversation[conversation.length - 1];
+
+    // Reuse the pending assistant question instead of generating a second one.
+    if (lastMessage?.role === 'assistant') {
+      const progress = Math.round((qaHistory.length / maxQuestions) * 100);
+
+      const response: ClarifyResponse = {
+        question: {
+          id: lastMessage.id,
+          question: lastMessage.content,
+        },
+        progress,
+        isComplete: false,
+      };
+
+      return NextResponse.json(response);
+    }
+
     // Determine if we should continue asking questions
-    const maxQuestions = 7;
     const currentQuestionCount = qaHistory.length;
     const isComplete = currentQuestionCount >= maxQuestions;
+    const previousQuestions = qaHistory.map((entry) => entry.question);
+
+    const canStopEarly = currentQuestionCount >= clarificationStrategy.minimumAnswersBeforeEarlyStop
+      && await hasEnoughClarificationForDesign(project.description, qaHistory);
     
-    if (isComplete) {
+    if (isComplete || canStopEarly) {
       const response: ClarifyResponse = {
         question: {
           id: 'complete',
@@ -71,11 +103,46 @@ export async function POST(request: NextRequest) {
     }
     
     // Generate next question using watsonx.ai
-    const questionText = await generateClarificationQuestion(
-      project.description,
-      project.skillLevel,
-      qaHistory
-    );
+    let questionText = '';
+    const normalizedPreviousQuestions = new Set(previousQuestions.map((question) => normalizeQuestion(question)));
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const candidateQuestion = await generateClarificationQuestion(
+        project.description,
+        project.skillLevel,
+        qaHistory,
+        previousQuestions
+      );
+
+      const normalizedCandidate = normalizeQuestion(candidateQuestion);
+
+      if (!normalizedPreviousQuestions.has(normalizedCandidate)) {
+        questionText = candidateQuestion;
+        break;
+      }
+    }
+
+    if (!questionText) {
+      questionText = 'What is the most important technical or operational constraint this system must handle from day one, such as security, integrations, scale, or uptime?';
+    }
+
+    const refreshedConversation = getConversation(projectId);
+    const latestMessage = refreshedConversation[refreshedConversation.length - 1];
+
+    if (latestMessage?.role === 'assistant') {
+      const progress = Math.round((currentQuestionCount / maxQuestions) * 100);
+
+      const response: ClarifyResponse = {
+        question: {
+          id: latestMessage.id,
+          question: latestMessage.content,
+        },
+        progress,
+        isComplete: false,
+      };
+
+      return NextResponse.json(response);
+    }
     
     // Save question to conversation
     const questionMessage = addMessage({

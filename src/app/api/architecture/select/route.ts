@@ -5,10 +5,6 @@ import {
   getArchitecture, 
   selectArchitecture 
 } from '@/lib/database';
-import { 
-  generateComponentBreakdown, 
-  generateJustifications 
-} from '@/lib/watsonx-client';
 import { SelectArchitectureRequest, SelectArchitectureResponse, APIError } from '@/types';
 
 /**
@@ -65,38 +61,6 @@ export async function POST(request: NextRequest) {
     // Select the architecture
     selectArchitecture(projectId, architectureId);
     
-    // Generate component breakdown using watsonx.ai
-    let components: any[] = [];
-    try {
-      components = await generateComponentBreakdown(
-        architecture.name,
-        architecture.techStack,
-        architecture.overview
-      );
-    } catch (error) {
-      console.error('Error generating components:', error);
-      // Continue without components if generation fails
-    }
-    
-    // Generate justifications using watsonx.ai
-    let justifications: any[] = [];
-    try {
-      justifications = await generateJustifications(
-        architecture.name,
-        architecture.techStack,
-        {
-          functionalRequirements: [],
-          nonFunctionalRequirements: [],
-          constraints: [],
-          assumptions: [],
-          keyFeatures: [],
-        }
-      );
-    } catch (error) {
-      console.error('Error generating justifications:', error);
-      // Continue without justifications if generation fails
-    }
-    
     // Update project status
     updateProject(projectId, { status: 'designing' });
     
@@ -105,8 +69,8 @@ export async function POST(request: NextRequest) {
     
     const response: SelectArchitectureResponse = {
       architecture: updatedArchitecture!,
-      components,
-      justifications,
+      components: [],
+      justifications: [],
       diagrams: architecture.diagram ? [{
         id: `diagram_${architectureId}`,
         architectureId,

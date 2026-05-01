@@ -1,11 +1,16 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Loading } from '@/components/ui/loading';
 import { Message } from '@/types';
+
+function calculateProgress(messages: Message[], maxQuestions: number): number {
+  const answeredQuestionCount = messages.filter((message) => message.role === 'user').length;
+  return Math.min(100, Math.round((answeredQuestionCount / maxQuestions) * 100));
+}
 
 export default function ClarifyPage() {
   const router = useRouter();
@@ -20,18 +25,18 @@ export default function ClarifyPage() {
   const [error, setError] = useState('');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const maxQuestions = 3;
   
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-  
-  // Load initial question
+
   useEffect(() => {
-    loadNextQuestion();
-  }, []);
-  
-  const loadNextQuestion = async () => {
+    setProgress(calculateProgress(messages, maxQuestions));
+  }, [maxQuestions, messages]);
+
+  const loadNextQuestion = useCallback(async () => {
     setIsLoading(true);
     setError('');
     
@@ -52,7 +57,6 @@ export default function ClarifyPage() {
         setIsComplete(true);
         setProgress(100);
       } else {
-        // Add question to messages
         const questionMessage: Message = {
           id: data.question.id,
           projectId,
@@ -60,9 +64,21 @@ export default function ClarifyPage() {
           content: data.question.question,
           timestamp: new Date().toISOString(),
         };
-        
-        setMessages(prev => [...prev, questionMessage]);
-        setProgress(data.progress);
+
+        setMessages((prev) => {
+          const lastMessage = prev[prev.length - 1];
+
+          if (lastMessage?.role === 'assistant' && lastMessage.content === questionMessage.content) {
+            return prev;
+          }
+
+          if (prev.some((message) => message.id === questionMessage.id)) {
+            return prev;
+          }
+
+          return [...prev, questionMessage];
+        });
+        setIsComplete(false);
       }
     } catch (err) {
       setError('Failed to load question. Please try again.');
@@ -70,7 +86,40 @@ export default function ClarifyPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    const loadClarificationState = async () => {
+      setIsLoading(true);
+      setError('');
+
+      try {
+        const response = await fetch(`/api/projects/${projectId}/conversations`);
+
+        if (!response.ok) {
+          throw new Error('Failed to load conversation history');
+        }
+
+        const { messages: savedMessages } = await response.json();
+        setMessages(savedMessages);
+        setIsComplete(savedMessages.filter((message: Message) => message.role === 'user').length >= maxQuestions);
+
+        const lastMessage = savedMessages[savedMessages.length - 1];
+        if (lastMessage?.role === 'assistant') {
+          setIsLoading(false);
+          return;
+        }
+
+        await loadNextQuestion();
+      } catch (err) {
+        setError('Failed to restore project progress. Please try again.');
+        console.error(err);
+        setIsLoading(false);
+      }
+    };
+
+    void loadClarificationState();
+  }, [loadNextQuestion, maxQuestions, projectId]);
   
   const handleSubmitAnswer = async () => {
     if (!currentAnswer.trim()) {
@@ -79,6 +128,7 @@ export default function ClarifyPage() {
     }
     
     setError('');
+    setIsLoading(true);
     
     // Add user answer to messages
     const answerMessage: Message = {
@@ -109,6 +159,7 @@ export default function ClarifyPage() {
     } catch (err) {
       setError('Failed to save answer. Please try again.');
       console.error(err);
+      setIsLoading(false);
     }
   };
   
@@ -143,9 +194,14 @@ export default function ClarifyPage() {
       {/* Progress Bar */}
       <div className="mb-8">
         <div className="flex justify-between items-center mb-2">
-          <h1 className="text-2xl font-bold text-gray-900">
-            Project Clarification
-          </h1>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              Clarification Dialog
+            </h1>
+            <p className="mt-1 text-sm text-gray-600">
+              A short back-and-forth to gather only the essential product and scale details before design options.
+            </p>
+          </div>
           <span className="text-sm text-gray-600">{progress}% Complete</span>
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
@@ -196,7 +252,7 @@ export default function ClarifyPage() {
               </div>
             ))}
             
-            {isLoading && (
+            {isLoading && !isComplete && (
               <div className="flex justify-start">
                 <div className="bg-gray-100 rounded-lg px-4 py-3">
                   <Loading size="sm" text="Thinking..." />
@@ -224,7 +280,7 @@ export default function ClarifyPage() {
               <textarea
                 value={currentAnswer}
                 onChange={(e) => setCurrentAnswer(e.target.value)}
-                placeholder="Type your answer here..."
+                placeholder="Reply briefly. You can also say things like 'decide yourself', 'use best practices', or 'show me options with justifications'."
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                 rows={4}
                 disabled={isLoading}
@@ -235,16 +291,30 @@ export default function ClarifyPage() {
                 }}
               />
               <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-500">
-                  Press Ctrl+Enter to submit
-                </span>
-                <Button
-                  onClick={handleSubmitAnswer}
-                  disabled={isLoading || !currentAnswer.trim()}
-                  isLoading={isLoading}
-                >
-                  Submit Answer
-                </Button>
+                <div className="flex gap-2">
+                  <span className="text-sm text-gray-500">
+                    Keep answers brief. Focus on functionality, users, integrations, and rough scale.
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => {
+                      setProgress(100);
+                      setIsComplete(true);
+                    }}
+                    variant="outline"
+                    disabled={isLoading}
+                  >
+                    Skip to Architecture
+                  </Button>
+                  <Button
+                    onClick={handleSubmitAnswer}
+                    disabled={isLoading || !currentAnswer.trim()}
+                    isLoading={isLoading}
+                  >
+                    Submit Answer
+                  </Button>
+                </div>
               </div>
             </div>
           </CardContent>

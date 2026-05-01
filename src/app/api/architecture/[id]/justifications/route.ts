@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getArchitecture } from '@/lib/database';
+import { getArchitecture, getArchitectureJustifications, getProject, saveArchitectureJustifications } from '@/lib/database';
 import { generateJustifications } from '@/lib/watsonx-client';
 import { APIError } from '@/types';
 
@@ -23,22 +23,37 @@ export async function GET(
       return NextResponse.json(errorResponse, { status: 404 });
     }
     
+    const project = getProject(architecture.projectId);
+    const cachedJustifications = getArchitectureJustifications(architecture.id);
+
+    if (cachedJustifications.length > 0) {
+      return NextResponse.json({
+        justifications: cachedJustifications,
+        count: cachedJustifications.length,
+        cached: true,
+      });
+    }
+
     // Generate justifications using watsonx.ai
     const justifications = await generateJustifications(
       architecture.name,
       architecture.techStack,
-      {
+      project?.requirements ?? {
         functionalRequirements: [],
         nonFunctionalRequirements: [],
         constraints: [],
         assumptions: [],
         keyFeatures: [],
-      }
+      },
+      project?.skillLevel ?? 'beginner'
     );
+
+    saveArchitectureJustifications(architecture.id, justifications);
     
     return NextResponse.json({
       justifications,
       count: justifications.length,
+      cached: false,
     });
   } catch (error) {
     console.error('Error fetching justifications:', error);

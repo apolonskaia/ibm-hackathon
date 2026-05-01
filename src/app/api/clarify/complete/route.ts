@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getProject, updateProject, getConversation } from '@/lib/database';
 import { generateRequirementsSummary } from '@/lib/watsonx-client';
-import { CompleteClarificationRequest, CompleteClarificationResponse, APIError } from '@/types';
+import { CompleteClarificationRequest, CompleteClarificationResponse, APIError, RequirementsSummary } from '@/types';
 
 /**
  * POST /api/clarify/complete
@@ -47,23 +47,39 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    // Generate requirements summary using watsonx.ai
+    // If no Q&A history, use just the project description
+    let summary: RequirementsSummary;
+    
     if (qaHistory.length === 0) {
-      const errorResponse: APIError = {
-        error: 'INSUFFICIENT_DATA',
-        message: 'No Q&A history found. Please answer at least one question.',
+      // User skipped clarification - create basic summary from project description
+      summary = {
+        functionalRequirements: [project.description],
+        nonFunctionalRequirements: ['To be determined based on architecture selection'],
+        constraints: ['No specific constraints identified'],
+        assumptions: ['System type and delivery model should be inferred from the project description instead of assuming a web application'],
+        keyFeatures: ['Core functionality as described in project description'],
       };
-      
-      return NextResponse.json(errorResponse, { status: 400 });
+    } else {
+      // Generate summary from Q&A history
+      summary = await generateRequirementsSummary(
+        project.description,
+        qaHistory
+      );
     }
     
-    // Generate requirements summary using watsonx.ai
-    const summary = await generateRequirementsSummary(
-      project.description,
-      qaHistory
-    );
+    // Update project status and save requirements summary
+    const updated = updateProject(projectId, {
+      status: 'generating_options',
+      requirements: summary  // Save summary to project
+    });
     
-    // Update project status
-    updateProject(projectId, { status: 'generating_options' });
+    console.log('✅ Requirements saved:', updated);
+    console.log('📝 Summary:', JSON.stringify(summary, null, 2));
+    
+    // Verify it was saved
+    const verifyProject = getProject(projectId);
+    console.log('🔍 Verify project has requirements:', !!verifyProject?.requirements);
     
     const response: CompleteClarificationResponse = {
       summary,
