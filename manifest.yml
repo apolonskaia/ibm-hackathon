@@ -1,0 +1,16 @@
+# IBM Cloud Foundry manifest file
+applications:
+- name: ai-system-design-assistant
+  memory: 512M
+  instances: 1
+  buildpacks:
+    - nodejs_buildpack
+  command: npm start
+  env:
+    NODE_ENV: production
+  services:
+    - watsonx-ai-service
+  routes:
+    - route: ai-system-design-assistant.mybluemix.net
+
+# Made with Bob
