@@ -9,8 +9,6 @@
     "lint": "next lint",
     "test": "jest --passWithNoTests --modulePathIgnorePatterns=.next",
     "test:watch": "jest --watch --modulePathIgnorePatterns=.next",
-    "db:migrate": "tsx scripts/migrate-db.ts",
-    "db:seed": "tsx scripts/seed-examples.ts",
     "test:watsonx": "tsx scripts/test-watsonx.ts"
   },
   "dependencies": {
