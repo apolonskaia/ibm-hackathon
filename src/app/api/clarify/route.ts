@@ -12,6 +12,15 @@ function normalizeQuestion(question: string): string {
     .trim();
 }
 
+function sanitizeClarificationMessage(message: string): string {
+  return message
+    .replace(/^\s*clarification\s+question\s*:\s*/i, '')
+    .replace(/^\s*clarification\s+message\s*:\s*/i, '')
+    .replace(/^\s*question\s*:\s*/i, '')
+    .replace(/^\s*message\s*:\s*/i, '')
+    .trim();
+}
+
 /**
  * POST /api/clarify
  * Generate next clarification question
@@ -55,7 +64,7 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < conversation.length; i += 2) {
       if (conversation[i]?.role === 'assistant' && conversation[i + 1]?.role === 'user') {
         qaHistory.push({
-          question: conversation[i].content,
+          question: sanitizeClarificationMessage(conversation[i].content),
           answer: conversation[i + 1].content,
         });
       }
@@ -72,7 +81,7 @@ export async function POST(request: NextRequest) {
       const response: ClarifyResponse = {
         question: {
           id: lastMessage.id,
-          question: lastMessage.content,
+          question: sanitizeClarificationMessage(lastMessage.content),
         },
         progress,
         isComplete: false,
@@ -114,10 +123,12 @@ export async function POST(request: NextRequest) {
         previousQuestions
       );
 
-      const normalizedCandidate = normalizeQuestion(candidateQuestion);
+      const sanitizedCandidateQuestion = sanitizeClarificationMessage(candidateQuestion);
+
+      const normalizedCandidate = normalizeQuestion(sanitizedCandidateQuestion);
 
       if (!normalizedPreviousQuestions.has(normalizedCandidate)) {
-        questionText = candidateQuestion;
+        questionText = sanitizedCandidateQuestion;
         break;
       }
     }
@@ -135,7 +146,7 @@ export async function POST(request: NextRequest) {
       const response: ClarifyResponse = {
         question: {
           id: latestMessage.id,
-          question: latestMessage.content,
+          question: sanitizeClarificationMessage(latestMessage.content),
         },
         progress,
         isComplete: false,

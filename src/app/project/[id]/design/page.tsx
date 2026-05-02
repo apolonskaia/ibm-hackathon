@@ -413,12 +413,10 @@ export default function DesignPage() {
                   
                   {just.tradeoffs.length > 0 && (
                     <div>
-                      <h4 className="font-semibold text-sm text-gray-700 mb-2">Tradeoffs</h4>
                       <div className="space-y-2">
                         {just.tradeoffs.map((tradeoff, j: number) => (
                           <div key={j} className="flex items-start space-x-4 p-3 bg-gray-50 rounded">
                             <div className="flex-1">
-                              <p className="font-medium text-gray-900">{tradeoff.aspect}</p>
                               <p className="text-sm text-green-600 mt-1">
                                 <span className="font-medium">✓ Benefit:</span> {tradeoff.benefit}
                               </p>

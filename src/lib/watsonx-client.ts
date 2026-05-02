@@ -465,7 +465,8 @@ Based on the project description and previous answers, generate ONE brief, focus
 - Treat the latest answer as useful information, not something to ignore
 - If the latest answer was partial, ask only for the missing detail and explicitly move the conversation forward
 - Never ask for the same information again using slightly different wording
-- If the user says things like "decide yourself", "use best practices", or "give me options with justifications", accept that as a valid preference and move to a different unresolved design question instead of pushing for the same decision
+- If the user says things like "decide yourself", "use best practices", "I don't know", "show me options later", or "give me options with justifications", accept that as a valid preference and move to a different unresolved design question instead of pushing for the same decision
+- Treat "I don't know" as uncertainty about that decision, not refusal to continue; either ask a different high-value question or leave that choice open for architecture tradeoffs later
 - If enough detail is already known in that area, move on to another important gap
 - If the latest user answer contains a direct question for you, answer it briefly in one short sentence first, then ask one short clarifying question only if it is still absolutely necessary
 
@@ -524,7 +525,8 @@ If the detected domain is a pipeline, bioinformatics workflow, ETL system, or ML
 - compute environment such as cloud, Kubernetes, or HPC
 - downstream outputs or consuming systems
 
-Use true when the user explicitly delegates implementation choices with phrases like "decide yourself", "use best practices", or "show me options with justifications".
+Use true when the user explicitly delegates implementation choices with phrases like "decide yourself", "use best practices", "show me options later", or "show me options with justifications" and the remaining essentials are otherwise clear enough.
+Treat "I don't know" as acceptable uncertainty about one area, but not as blanket completeness unless the other essentials are already clear.
 Use false if another short clarification question is still truly necessary.
 
 Return only valid JSON.`;
@@ -571,7 +573,8 @@ ${qa}
 Domain Guidance:
 ${domainRequirementGuidance}
 
-If the user answered with phrases like "decide yourself", "use best practices", or "show options with justifications", treat that as a valid instruction to leave room for architecture options rather than as missing information. Capture those answers as assumptions or design flexibility, not as unanswered gaps.
+If the user answered with phrases like "decide yourself", "use best practices", "I don't know", "show me options later", or "show options with justifications", treat that as a valid instruction to leave room for architecture options rather than as missing information. Capture those answers as assumptions, deferred decisions, or design flexibility, not as unanswered gaps.
+When the user says "I don't know", record the specific area as intentionally undecided so the architecture options can cover sensible alternatives.
 If the detected domain is a pipeline, bioinformatics workflow, ETL system, or ML workflow, explicitly capture data size, workflow orchestration, reproducibility, compute environment, and downstream outputs whenever the dialog gives enough signal.
 
 Generate a JSON object with the following structure:
@@ -621,6 +624,7 @@ export async function generateArchitectureOptions(
 Functional: ${requirements.functionalRequirements.join(', ')}
 Non-Functional: ${requirements.nonFunctionalRequirements.join(', ')}
 Constraints: ${requirements.constraints.join(', ')}
+Assumptions: ${requirements.assumptions.join(', ')}
 Key Features: ${requirements.keyFeatures.join(', ')}
 `;
 
@@ -653,6 +657,7 @@ If this is a pipeline or scientific workflow, prefer architecture options such a
 For bioinformatics specifically, pay attention to data volumes, reproducibility, workflow orchestration, storage layout, compute environment, reference data management, and integration with domain tools.
 The 3 options should be meaningfully different in tradeoffs, for example one optimized for simplicity, one for scale/flexibility, and one for operational rigor or reproducibility when that distinction makes sense.
 Avoid generic filler. Pros and cons must be specific to this project rather than broad statements that apply to almost any architecture.
+If the requirements include assumptions or deferred decisions such as "use best practices", "I don't know", or "show me options later", treat those as explicit user guidance. Reflect them by keeping unresolved choices open, surfacing sensible alternatives across the 3 options, and calling out where an option makes a default best-practice choice versus where it preserves flexibility.
 
 Return a JSON array with 3 options. Each option should have this structure:
 {
@@ -855,6 +860,13 @@ Each justification should have:
 }
 
 The "decision", "reasoning", "description", "whyNotChosen", "benefit", and "cost" text must match the requested explanation style.
+For every tradeoff:
+- "benefit" must describe a genuine upside of the chosen decision
+- "cost" must describe a genuine downside, limitation, added burden, or risk of the chosen decision
+- Never put a drawback in the benefit field
+- Never put a mitigation, upside, or justification in the cost field unless it is clearly phrased as the downside
+- If an item mentions things like steeper learning curve, higher complexity, more operational overhead, slower delivery, more cost, tighter coupling, or vendor lock-in, that belongs in the "cost" field, not the "benefit" field
+- Before returning, verify each tradeoff reads logically as "benefit versus cost" from the perspective of the chosen architecture
 
 Return a JSON array. Return only valid JSON, no additional text.`;
 
@@ -868,11 +880,73 @@ Return a JSON array. Return only valid JSON, no additional text.`;
     if (!jsonMatch) {
       throw new Error('No JSON array found in response');
     }
-    return JSON.parse(jsonMatch[0]);
+    return normalizeJustifications(JSON.parse(jsonMatch[0]));
   } catch (error) {
     console.error('Failed to parse justifications:', error);
     return [];
   }
+}
+
+function looksLikeBenefit(text: string): boolean {
+  return /\b(faster|simpler|simplicity|easier|ease of development|ease|clearer|safer|secure|reliable|scalable|flexible|maintainable|productive|consistent|strong ecosystem|community support|reusable|observable|portable|efficient|better fit|outweigh(?:s)? the .* concerns?)\b/i.test(text);
+}
+
+function looksLikeCost(text: string): boolean {
+  return /\b(steeper|harder|slower|more time|more effort|complex|complexity|overhead|burden|risk|costly|expensive|lock-?in|coupling|latency|maintenance|operational load|migration effort|learning curve|setup effort|less scalable|less reliable|less flexible|less secure|more tightly coupled|tighter coupling|all components scale together)\b/i.test(text);
+}
+
+function extractPositiveClause(text: string): string | null {
+  const match = text.match(/\b(?:but|however|though|although|while|offset by|balanced by)\b([\s\S]*)/i);
+  const clause = match?.[1]?.trim();
+
+  if (!clause || !looksLikeBenefit(clause)) {
+    return null;
+  }
+
+  return clause
+    .replace(/^[,:;\-\s]+/, '')
+    .replace(/^(?:however|but|though|although|while)\s*,?\s*/i, '')
+    .replace(/^for\s+[^,]+,\s*/i, '')
+    .replace(/^(?:this|that|it)\s+(?:is\s+)?(?:offset|balanced)\s+by\s+/i, '')
+    .trim();
+}
+
+function extractNegativeClause(text: string): string {
+  return text
+    .split(/\b(?:but|however|though|although|while|offset by|balanced by)\b/i)[0]
+    .trim()
+    .replace(/[,:;\-\s]+$/, '');
+}
+
+export function normalizeJustifications(justifications: any[]): any[] {
+  return justifications.map((justification) => ({
+    ...justification,
+    tradeoffs: Array.isArray(justification.tradeoffs)
+      ? justification.tradeoffs.map((tradeoff: any) => {
+          const benefit = typeof tradeoff?.benefit === 'string' ? tradeoff.benefit.trim() : '';
+          const cost = typeof tradeoff?.cost === 'string' ? tradeoff.cost.trim() : '';
+          const extractedBenefitFromCost = extractPositiveClause(cost);
+          const extractedCostFromCost = extractNegativeClause(cost);
+
+          const shouldSwap = looksLikeCost(benefit) && !looksLikeCost(cost) && looksLikeBenefit(cost);
+          const shouldRewriteFromMixedCost = looksLikeCost(benefit) && Boolean(extractedBenefitFromCost);
+
+          return {
+            ...tradeoff,
+            benefit: shouldRewriteFromMixedCost
+              ? extractedBenefitFromCost
+              : shouldSwap
+              ? cost
+              : benefit,
+            cost: shouldRewriteFromMixedCost
+              ? extractNegativeClause(benefit) || extractedCostFromCost || cost
+              : shouldSwap
+              ? benefit
+              : cost,
+          };
+        })
+      : [],
+  }));
 }
 
 /**

@@ -7,10 +7,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Loading } from '@/components/ui/loading';
 import { Message } from '@/types';
 
-function calculateProgress(messages: Message[], maxQuestions: number): number {
-  const answeredQuestionCount = messages.filter((message) => message.role === 'user').length;
-  return Math.min(100, Math.round((answeredQuestionCount / maxQuestions) * 100));
-}
+const QUICK_REPLY_OPTIONS = [
+  'Use best practices',
+  "I don't know",
+  'Show me options later',
+] as const;
 
 export default function ClarifyPage() {
   const router = useRouter();
@@ -20,7 +21,6 @@ export default function ClarifyPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentAnswer, setCurrentAnswer] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState('');
   
@@ -31,10 +31,6 @@ export default function ClarifyPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  useEffect(() => {
-    setProgress(calculateProgress(messages, maxQuestions));
-  }, [maxQuestions, messages]);
 
   const loadNextQuestion = useCallback(async () => {
     setIsLoading(true);
@@ -55,7 +51,6 @@ export default function ClarifyPage() {
       
       if (data.isComplete) {
         setIsComplete(true);
-        setProgress(100);
       } else {
         const questionMessage: Message = {
           id: data.question.id,
@@ -121,8 +116,10 @@ export default function ClarifyPage() {
     void loadClarificationState();
   }, [loadNextQuestion, maxQuestions, projectId]);
   
-  const handleSubmitAnswer = async () => {
-    if (!currentAnswer.trim()) {
+  const handleSubmitAnswer = async (answerOverride?: string) => {
+    const answerToSubmit = (answerOverride ?? currentAnswer).trim();
+
+    if (!answerToSubmit) {
       setError('Please provide an answer');
       return;
     }
@@ -135,7 +132,7 @@ export default function ClarifyPage() {
       id: `answer_${Date.now()}`,
       projectId,
       role: 'user',
-      content: currentAnswer,
+      content: answerToSubmit,
       timestamp: new Date().toISOString(),
     };
     
@@ -148,7 +145,7 @@ export default function ClarifyPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           role: 'user',
-          content: currentAnswer,
+          content: answerToSubmit,
         }),
       });
       
@@ -191,25 +188,13 @@ export default function ClarifyPage() {
   
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
-      {/* Progress Bar */}
       <div className="mb-8">
-        <div className="flex justify-between items-center mb-2">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Project Brief
-            </h1>
-            <p className="mt-1 text-sm text-gray-600">
-              Capture the core project intent and answer a few focused questions before reviewing architecture options.
-            </p>
-          </div>
-          <span className="text-sm text-gray-600">{progress}% Complete</span>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-2">
-          <div
-            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+        <h1 className="text-2xl font-bold text-gray-900">
+          Requirements discussion
+        </h1>
+        <p className="mt-1 text-sm text-gray-600">
+          Capture the core project intent and answer a few focused questions before reviewing architecture options.
+        </p>
       </div>
       
       {/* Messages */}
@@ -277,6 +262,19 @@ export default function ClarifyPage() {
         <Card>
           <CardContent className="p-6">
             <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {QUICK_REPLY_OPTIONS.map((quickReply) => (
+                  <Button
+                    key={quickReply}
+                    type="button"
+                    variant="outline"
+                    disabled={isLoading}
+                    onClick={() => void handleSubmitAnswer(quickReply)}
+                  >
+                    {quickReply}
+                  </Button>
+                ))}
+              </div>
               <textarea
                 value={currentAnswer}
                 onChange={(e) => setCurrentAnswer(e.target.value)}
@@ -299,7 +297,6 @@ export default function ClarifyPage() {
                 <div className="flex gap-2">
                   <Button
                     onClick={() => {
-                      setProgress(100);
                       setIsComplete(true);
                     }}
                     variant="outline"
@@ -308,7 +305,8 @@ export default function ClarifyPage() {
                     Skip to Architecture Options
                   </Button>
                   <Button
-                    onClick={handleSubmitAnswer}
+                    type="button"
+                    onClick={() => void handleSubmitAnswer()}
                     disabled={isLoading || !currentAnswer.trim()}
                     isLoading={isLoading}
                   >
@@ -341,7 +339,7 @@ export default function ClarifyPage() {
               </svg>
             </div>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              Clarification Complete!
+              Requirements Collected!
             </h2>
             <p className="text-gray-600 mb-6">
               We have enough information to generate architecture options for your project.

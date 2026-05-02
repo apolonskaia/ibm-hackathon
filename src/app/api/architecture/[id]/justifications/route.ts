@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getArchitecture, getArchitectureJustifications, getProject, saveArchitectureJustifications } from '@/lib/database';
-import { generateJustifications } from '@/lib/watsonx-client';
+import { generateJustifications, normalizeJustifications } from '@/lib/watsonx-client';
 import { APIError } from '@/types';
 
 /**
@@ -27,9 +27,15 @@ export async function GET(
     const cachedJustifications = getArchitectureJustifications(architecture.id);
 
     if (cachedJustifications.length > 0) {
+      const normalizedCachedJustifications = normalizeJustifications(cachedJustifications);
+
+      if (JSON.stringify(normalizedCachedJustifications) !== JSON.stringify(cachedJustifications)) {
+        saveArchitectureJustifications(architecture.id, normalizedCachedJustifications);
+      }
+
       return NextResponse.json({
-        justifications: cachedJustifications,
-        count: cachedJustifications.length,
+        justifications: normalizedCachedJustifications,
+        count: normalizedCachedJustifications.length,
         cached: true,
       });
     }

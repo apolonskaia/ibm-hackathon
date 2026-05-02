@@ -217,7 +217,7 @@ export default function ArchitecturePage() {
           Architecture Options
         </h1>
         <p className="text-gray-600">
-          Review the generated architecture paths, compare tradeoffs, and move between options before choosing one.
+          Review architecture options, compare trade-offs, and choose the one that fits best.
         </p>
         {options.length > 0 && (
           <div className="mt-4">

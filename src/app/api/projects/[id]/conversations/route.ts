@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getProject, getConversation, addMessage } from '@/lib/database';
 import { APIError } from '@/types';
 
+function sanitizeAssistantMessage(content: string): string {
+  return content
+    .replace(/^\s*clarification\s+question\s*:\s*/i, '')
+    .replace(/^\s*clarification\s+message\s*:\s*/i, '')
+    .replace(/^\s*question\s*:\s*/i, '')
+    .replace(/^\s*message\s*:\s*/i, '')
+    .trim();
+}
+
 /**
  * GET /api/projects/[id]/conversations
  * Get conversation history for a project
@@ -23,7 +32,12 @@ export async function GET(
     }
     
     // Get conversation history
-    const messages = getConversation(params.id);
+    const messages = getConversation(params.id).map((message) => ({
+      ...message,
+      content: message.role === 'assistant'
+        ? sanitizeAssistantMessage(message.content)
+        : message.content,
+    }));
     
     return NextResponse.json({
       messages,
@@ -88,7 +102,7 @@ export async function POST(
     const message = addMessage({
       projectId: params.id,
       role,
-      content,
+      content: role === 'assistant' ? sanitizeAssistantMessage(content) : content,
     });
     
     return NextResponse.json({

@@ -137,70 +137,66 @@ export default function ProjectHistoryPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {projects.map((entry) => (
             <Card key={entry.project.id} className="border-gray-200">
-              <CardHeader>
+              <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <CardTitle className="text-xl text-gray-900">
+                  <div className="min-w-0">
+                    <CardTitle className="text-lg text-gray-900 leading-tight">
                       {deriveProjectTitle(entry.project.name, entry.project.description)}
                     </CardTitle>
-                    <p className="mt-2 text-sm text-gray-600">{entry.project.description}</p>
+                    <p className="mt-1 line-clamp-2 text-sm text-gray-600">{entry.project.description}</p>
                   </div>
-                  <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusClasses[entry.project.status]}`}>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClasses[entry.project.status]}`}>
                     {statusLabels[entry.project.status]}
                   </span>
                 </div>
               </CardHeader>
 
-              <CardContent className="space-y-5">
-                <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
-                  <div className="rounded-lg bg-gray-50 p-3">
+              <CardContent className="space-y-4 pt-0">
+                <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-3">
+                  <div className="rounded-lg bg-gray-50 p-2.5">
                     <div className="text-gray-500">Answers saved</div>
-                    <div className="mt-1 font-medium text-gray-900">{entry.answeredQuestionCount}</div>
+                    <div className="mt-0.5 font-medium text-gray-900">{entry.answeredQuestionCount}</div>
                   </div>
-                  <div className="rounded-lg bg-gray-50 p-3">
+                  <div className="rounded-lg bg-gray-50 p-2.5">
                     <div className="text-gray-500">Architecture options</div>
-                    <div className="mt-1 font-medium text-gray-900">{entry.architectureCount}</div>
+                    <div className="mt-0.5 font-medium text-gray-900">{entry.architectureCount}</div>
                   </div>
                 </div>
 
-                <div className="space-y-2 text-sm text-gray-700">
-                  <p>
+                <div className="space-y-1.5 text-sm text-gray-700">
+                  <p className="leading-snug">
                     <span className="font-medium text-gray-900">Requirements captured:</span>{' '}
                     {entry.hasRequirements ? 'Yes' : 'Not yet'}
                   </p>
-                  <p>
+                  <p className="leading-snug">
                     <span className="font-medium text-gray-900">Conversation messages:</span>{' '}
                     {entry.conversationCount}
                   </p>
-                  <p>
+                  <p className="leading-snug">
                     <span className="font-medium text-gray-900">Last updated:</span>{' '}
                     {new Date(entry.project.updatedAt).toLocaleString()}
                   </p>
                   {entry.selectedArchitecture && (
-                    <p>
+                    <p className="leading-snug">
                       <span className="font-medium text-gray-900">Selected architecture:</span>{' '}
                       {entry.selectedArchitecture.name}
                     </p>
                   )}
                 </div>
 
-                <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-4">
-                  <div className="text-sm text-gray-500">
-                    Resume from: <span className="font-medium text-gray-700">{entry.resumePath.split('/').pop()}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
+                <div className="flex justify-end gap-3 border-t border-gray-100 pt-3">
                     <Button
-                      variant="danger"
+                      variant="outline"
+                      className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300"
                       onClick={() => setPendingDeleteProject(entry)}
                       isLoading={deletingProjectId === entry.project.id}
                     >
                       Delete
                     </Button>
-                    <Button onClick={() => router.push(entry.resumePath)}>Continue Project</Button>
-                  </div>
+                    <Button onClick={() => router.push(entry.resumePath)}>Go to Progect</Button>
                 </div>
               </CardContent>
             </Card>

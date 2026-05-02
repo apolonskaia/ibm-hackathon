@@ -9,7 +9,7 @@ import { deriveProjectTitle } from '@/lib/utils';
 const PROJECT_STAGES = [
   {
     hrefSuffix: 'clarify',
-    label: 'Project Brief',
+    label: 'Requirements discussion',
     description: 'Input and clarification',
   },
   {

@@ -7,6 +7,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Loading } from '@/components/ui/loading';
 import { Message } from '@/types';
 
+const QUICK_REPLY_OPTIONS = [
+  'Use best practices',
+  "I don't know",
+  'Show me options later',
+] as const;
+
 function calculateProgress(messages: Message[], maxQuestions: number): number {
   const answeredQuestionCount = messages.filter((message) => message.role === 'user').length;
   return Math.min(100, Math.round((answeredQuestionCount / maxQuestions) * 100));
@@ -25,12 +31,28 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const clarificationSectionRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const maxQuestions = 5;
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoadingQuestion]);
+    if (!projectId) {
+      return;
+    }
+
+    if (messages.length <= 1) {
+      clarificationSectionRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+      return;
+    }
+
+    messagesContainerRef.current?.scrollTo({
+      top: messagesContainerRef.current.scrollHeight,
+      behavior: 'smooth',
+    });
+  }, [messages, isLoadingQuestion, projectId]);
 
   useEffect(() => {
     setProgress(calculateProgress(messages, maxQuestions));
@@ -142,13 +164,15 @@ export default function Home() {
     }
   };
 
-  const handleSubmitAnswer = async () => {
+  const handleSubmitAnswer = async (answerOverride?: string) => {
     if (!projectId) {
       setError('Project not initialized. Please start again.');
       return;
     }
 
-    if (!currentAnswer.trim()) {
+    const answerToSubmit = (answerOverride ?? currentAnswer).trim();
+
+    if (!answerToSubmit) {
       setError('Please provide an answer');
       return;
     }
@@ -160,7 +184,7 @@ export default function Home() {
       id: `answer_${Date.now()}`,
       projectId,
       role: 'user',
-      content: currentAnswer,
+      content: answerToSubmit,
       timestamp: new Date().toISOString(),
     };
 
@@ -172,7 +196,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           role: 'user',
-          content: currentAnswer,
+          content: answerToSubmit,
         }),
       });
 
@@ -222,14 +246,13 @@ export default function Home() {
   return (
     <div className="container mx-auto px-4 py-12">
       {/* Hero Section */}
-      <div className="max-w-4xl mx-auto text-center mb-16">
-        <h1 className="text-5xl font-bold text-gray-900 mb-6">
+      <div className="max-w-4xl mx-auto text-center mb-10">
+        <h1 className="text-4xl font-bold text-gray-900 mb-6">
           Transform Ideas into
-          <span className="text-blue-600"> Professional Architectures</span>
+          <span className="block text-blue-600">Clear Software Designs</span>
         </h1>
         <p className="text-xl text-gray-600 mb-8">
-          AI-powered system design assistant that guides you through creating
-          structured, visualized software architectures in minutes.
+          AI-powered system design assistant that guides you through options, explains trade-offs, and helps you create robust, reliable software architectures in minutes.
         </p>
         <div className="flex justify-center space-x-4 text-sm text-gray-500">
           <div className="flex items-center">
@@ -309,9 +332,6 @@ export default function Home() {
               >
                 {projectIdea.length} / 500 characters (min 50)
               </span>
-              <span className="text-sm text-gray-500">
-                Explanations default to beginner-friendly language.
-              </span>
             </div>
           </div>
 
@@ -350,35 +370,30 @@ export default function Home() {
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   ></path>
                 </svg>
-                Starting Clarification...
+                Starting Build...
               </span>
             ) : (
-              'Start Clarification'
+              'Start Building'
             )}
           </button>
         </form>
       </div>
 
       {projectId && (
-        <div className="max-w-3xl mx-auto mt-8 space-y-6">
+        <div ref={clarificationSectionRef} className="max-w-3xl mx-auto mt-8 space-y-6 scroll-mt-24">
           <div>
-            <div className="flex justify-between items-center mb-2">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Clarification Dialog</h2>
-                <p className="mt-1 text-sm text-gray-600">
-                  We’ll keep this on the same page and ask only for the details needed to generate good design options.
+            <div className="mb-2">
+              <div className="text-center">
+                <p className="text-xl text-gray-600 lg:whitespace-nowrap">
+                  Answer a few quick questions to shape the right design for your project.
                 </p>
               </div>
-              <span className="text-sm text-gray-600">{progress}% Complete</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
             </div>
           </div>
 
           <Card>
             <CardContent className="p-6">
-              <div className="space-y-4 max-h-[500px] overflow-y-auto">
+              <div ref={messagesContainerRef} className="space-y-4 max-h-[500px] overflow-y-auto">
                 {messages.map((message) => (
                   <div
                     key={message.id}
@@ -412,8 +427,6 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-
-                <div ref={messagesEndRef} />
               </div>
             </CardContent>
           </Card>
@@ -428,6 +441,19 @@ export default function Home() {
             <Card>
               <CardContent className="p-6">
                 <div className="space-y-4">
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_REPLY_OPTIONS.map((quickReply) => (
+                      <Button
+                        key={quickReply}
+                        type="button"
+                        variant="outline"
+                        disabled={isBusy}
+                        onClick={() => void handleSubmitAnswer(quickReply)}
+                      >
+                        {quickReply}
+                      </Button>
+                    ))}
+                  </div>
                   <textarea
                     value={currentAnswer}
                     onChange={(e) => setCurrentAnswer(e.target.value)}
@@ -457,7 +483,8 @@ export default function Home() {
                         Skip to Architecture
                       </Button>
                       <Button
-                        onClick={handleSubmitAnswer}
+                        type="button"
+                        onClick={() => void handleSubmitAnswer()}
                         disabled={isBusy || !currentAnswer.trim()}
                         isLoading={isSavingAnswer}
                       >
@@ -476,7 +503,7 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Clarification Complete!</h2>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Requirements Collected!</h2>
                 <p className="text-gray-600 mb-6">
                   We have enough information to generate architecture options for your project.
                 </p>
