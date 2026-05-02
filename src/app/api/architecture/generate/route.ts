@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProject, updateProject, createArchitecture, deleteArchitectures } from '@/lib/database';
+import { getProject, getArchitectures, reorderArchitectures, updateProject, createArchitecture, deleteArchitectures } from '@/lib/database';
 import { generateArchitectureOptions, generateMermaidDiagram } from '@/lib/watsonx-client';
 import { GenerateArchitectureRequest, GenerateArchitectureResponse, APIError } from '@/types';
 
@@ -10,7 +10,7 @@ import { GenerateArchitectureRequest, GenerateArchitectureResponse, APIError } f
 export async function POST(request: NextRequest) {
   try {
     const body: GenerateArchitectureRequest = await request.json();
-    const { projectId, requirements } = body;
+    const { projectId, requirements, append = false } = body;
     
     // Validate input
     if (!projectId || !requirements) {
@@ -32,6 +32,17 @@ export async function POST(request: NextRequest) {
       
       return NextResponse.json(errorResponse, { status: 404 });
     }
+
+    const existingArchitectures = getArchitectures(projectId);
+
+    if (!append && existingArchitectures.length > 0) {
+      const response: GenerateArchitectureResponse = {
+        options: existingArchitectures,
+        message: 'Using previously generated architecture options',
+      };
+
+      return NextResponse.json(response);
+    }
     
     // Generate architecture options using watsonx.ai
     const optionsData = await generateArchitectureOptions(
@@ -40,8 +51,11 @@ export async function POST(request: NextRequest) {
       project.skillLevel
     );
 
-    // Replace any previously generated options for this project instead of appending.
-    deleteArchitectures(projectId);
+    if (!append) {
+      deleteArchitectures(projectId);
+    }
+
+    const baseDisplayOrder = append ? existingArchitectures.length : 0;
     
     // Save options to database and generate diagrams
     const savedOptions = await Promise.all(
@@ -52,7 +66,7 @@ export async function POST(request: NextRequest) {
           const components = Object.values(option.techStack || {})
             .filter((value): value is string[] => Array.isArray(value))
             .flat();
-          
+
           diagram = await generateMermaidDiagram(
             option.name,
             components,
@@ -76,15 +90,22 @@ export async function POST(request: NextRequest) {
           estimatedCost: option.estimatedCost,
           diagram,
           selected: false,
+          displayOrder: baseDisplayOrder + optionsData.indexOf(option),
         });
       })
     );
+
+    if (append) {
+      reorderArchitectures(projectId, savedOptions.map((option) => option.id));
+    }
+
+    const orderedOptions = getArchitectures(projectId);
     
     // Update project status
     updateProject(projectId, { status: 'selecting_architecture' });
     
     const response: GenerateArchitectureResponse = {
-      options: savedOptions,
+      options: append ? orderedOptions : savedOptions,
       message: 'Architecture options generated successfully',
     };
     

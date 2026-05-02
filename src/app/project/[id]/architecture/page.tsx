@@ -1,16 +1,19 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Loading, LoadingPage } from '@/components/ui/loading';
 import { ArchitectureOption } from '@/types';
 
+const INITIAL_ARCHITECTURE_COUNT = 3;
+
 export default function ArchitecturePage() {
   const router = useRouter();
   const params = useParams();
   const projectId = params.id as string;
+  const visibleCountStorageKey = `project:${projectId}:visible-architectures`;
   
   const [options, setOptions] = useState<ArchitectureOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -18,16 +21,48 @@ export default function ArchitecturePage() {
   const [isSelecting, setIsSelecting] = useState(false);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_ARCHITECTURE_COUNT);
+  const hasRequestedInitialOptions = useRef(false);
+
+  const updateVisibleCount = useCallback((nextVisibleCount: number) => {
+    setVisibleCount(nextVisibleCount);
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(visibleCountStorageKey, String(nextVisibleCount));
+    }
+  }, [visibleCountStorageKey]);
+
+  const getPersistedVisibleCount = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return INITIAL_ARCHITECTURE_COUNT;
+    }
+
+    const savedValue = window.localStorage.getItem(visibleCountStorageKey);
+    const parsedValue = savedValue ? Number.parseInt(savedValue, 10) : NaN;
+    return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : INITIAL_ARCHITECTURE_COUNT;
+  }, [visibleCountStorageKey]);
   
-  const generateOptions = useCallback(async (requirementsOverride?: unknown) => {
-    setIsLoading(true);
+  const generateOptions = useCallback(async ({
+    requirementsOverride,
+    append = false,
+    showPageLoader = true,
+  }: {
+    requirementsOverride?: unknown;
+    append?: boolean;
+    showPageLoader?: boolean;
+  } = {}) => {
+    if (showPageLoader) {
+      setIsLoading(true);
+    }
+
+    setIsGenerating(true);
     setError('');
     
     try {
       let requirements = requirementsOverride;
 
       if (!requirements) {
-        const projectResponse = await fetch(`/api/projects/${projectId}`);
+        const projectResponse = await fetch(`/api/projects/${projectId}`, { cache: 'no-store' });
 
         if (!projectResponse.ok) {
           throw new Error('Failed to get project');
@@ -44,10 +79,12 @@ export default function ArchitecturePage() {
       // Generate architecture options
       const archResponse = await fetch('/api/architecture/generate', {
         method: 'POST',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId,
           requirements,
+          append,
         }),
       });
       
@@ -56,22 +93,37 @@ export default function ArchitecturePage() {
       }
       
       const { options: generatedOptions } = await archResponse.json();
-      setOptions(generatedOptions);
+      if (append) {
+        setOptions(generatedOptions);
+        updateVisibleCount(Math.min(getPersistedVisibleCount() + 3, generatedOptions.length));
+      } else {
+        setOptions(generatedOptions);
+        updateVisibleCount(Math.min(generatedOptions.length, INITIAL_ARCHITECTURE_COUNT));
+      }
     } catch (err) {
-      setError('Failed to generate architecture options. Please try again.');
+      if (!append) {
+        hasRequestedInitialOptions.current = false;
+      }
+
+      setError(append
+        ? 'Failed to generate additional architecture options. Please try again.'
+        : 'Failed to generate architecture options. Please try again.');
       console.error(err);
     } finally {
-      setIsLoading(false);
+      if (showPageLoader) {
+        setIsLoading(false);
+      }
+
       setIsGenerating(false);
     }
-  }, [projectId]);
+  }, [getPersistedVisibleCount, projectId, updateVisibleCount]);
 
   useEffect(() => {
     const loadOptions = async () => {
       setIsLoading(true);
       setError('');
 
-      const projectResponse = await fetch(`/api/projects/${projectId}`);
+      const projectResponse = await fetch(`/api/projects/${projectId}`, { cache: 'no-store' });
 
       if (!projectResponse.ok) {
         setError('Failed to load project. Please try again.');
@@ -83,12 +135,15 @@ export default function ArchitecturePage() {
 
       if (architectures.length > 0) {
         setOptions(architectures);
+        updateVisibleCount(Math.min(architectures.length, getPersistedVisibleCount()));
+        hasRequestedInitialOptions.current = true;
         setIsLoading(false);
         return;
       }
 
-      if (project.requirements) {
-        await generateOptions(project.requirements);
+      if (project.requirements && !hasRequestedInitialOptions.current) {
+        hasRequestedInitialOptions.current = true;
+        await generateOptions({ requirementsOverride: project.requirements });
         return;
       }
 
@@ -96,7 +151,7 @@ export default function ArchitecturePage() {
     };
 
     void loadOptions();
-  }, [generateOptions, projectId]);
+  }, [generateOptions, getPersistedVisibleCount, projectId, updateVisibleCount]);
   
   const handleSelectArchitecture = async (architectureId: string) => {
     setIsSelecting(true);
@@ -128,8 +183,14 @@ export default function ArchitecturePage() {
   };
   
   if (isLoading) {
-    return <LoadingPage text="Generating architecture options..." />;
+    return <LoadingPage text="Loading architecture options..." />;
   }
+
+  const visibleOptions = options.slice(0, visibleCount);
+
+  const handleGenerateMore = async () => {
+    await generateOptions({ append: true, showPageLoader: false });
+  };
   
   const getComplexityColor = (complexity: string) => {
     switch (complexity) {
@@ -153,12 +214,23 @@ export default function ArchitecturePage() {
     <div className="container mx-auto px-4 py-8 max-w-7xl">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Choose Your Architecture
+          Architecture Options
         </h1>
         <p className="text-gray-600">
-          We&apos;ve generated {options.length} architecture options based on your requirements.
-          Review each option and select the one that best fits your needs.
+          Review the generated architecture paths, compare tradeoffs, and move between options before choosing one.
         </p>
+        {options.length > 0 && (
+          <div className="mt-4">
+            <Button
+              variant="outline"
+              onClick={() => void handleGenerateMore()}
+              disabled={isGenerating || isSelecting}
+              isLoading={isGenerating}
+            >
+              {isGenerating ? 'Generating More Architectures...' : 'Generate More Architectures'}
+            </Button>
+          </div>
+        )}
       </div>
       
       {error && (
@@ -168,7 +240,7 @@ export default function ArchitecturePage() {
       )}
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {options.map((option, index) => (
+        {visibleOptions.map((option, index) => (
           <Card
             key={option.id}
             variant="elevated"
@@ -277,8 +349,8 @@ export default function ArchitecturePage() {
       {options.length === 0 && !isLoading && (
         <div className="text-center py-12">
           <p className="text-gray-600 mb-4">No architecture options available.</p>
-          <Button onClick={generateOptions}>
-            Regenerate Options
+          <Button onClick={() => generateOptions()} isLoading={isGenerating}>
+            Generate Architecture Options
           </Button>
         </div>
       )}

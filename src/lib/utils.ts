@@ -218,6 +218,90 @@ export function isValidUrl(url: string): boolean {
   }
 }
 
+function toTitleCaseWords(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function singularizeWord(word: string): string {
+  if (word.length > 4 && word.endsWith('ies')) {
+    return `${word.slice(0, -3)}y`;
+  }
+
+  if (word.length > 3 && word.endsWith('s') && !word.endsWith('ss')) {
+    return word.slice(0, -1);
+  }
+
+  return word;
+}
+
+export function deriveProjectTitle(name?: string, description?: string): string {
+  const source = (description || name || '').trim();
+
+  if (!source) {
+    return 'Project Workspace';
+  }
+
+  const normalized = source
+    .replace(/^["'`\s]+|["'`\s]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const strippedLead = normalized
+    .replace(/^i\s+(?:want|need|would like)\s+to\s+(?:build|create|make|develop)\s+/i, '')
+    .replace(/^build\s+/i, '')
+    .replace(/^create\s+/i, '')
+    .replace(/^develop\s+/i, '')
+    .replace(/^(?:an?|the)\s+/i, '');
+
+  const firstSentence = strippedLead.split(/[.!?]/)[0].trim();
+  const typeMatch = firstSentence.match(/\b(online shop|marketplace|platform|dashboard|portal|application|app|system|tool)\b/i);
+  const objectMatch = firstSentence.match(/\b(?:for|to)\s+(?:sell|manage|track|book|share|store|analyze|monitor|support|organize|run|host|stream|teach)?\s*(.+)$/i);
+
+  if (typeMatch && objectMatch) {
+    const type = typeMatch[1].toLowerCase();
+    const objectWords = objectMatch[1]
+      .split(/\b(?:with|that|where|which|and|using|on)\b/i)[0]
+      .split(/\s+/)
+      .map((word) => word.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ''))
+      .filter((word) => word && !['my', 'our', 'their', 'his', 'her', 'the', 'a', 'an'].includes(word));
+
+    const subject = objectWords[objectWords.length - 1];
+
+    if (subject) {
+      const baseType = type === 'online shop' ? 'shop' : type;
+      return toTitleCaseWords(`${singularizeWord(subject)} ${baseType}`);
+    }
+  }
+
+  const segment = firstSentence
+    .split(/\b(?:that|with|for|to support|to help|where|which)\b/i)[0]
+    .trim();
+
+  const words = segment
+    .split(/\s+/)
+    .map((word) => word.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, ''))
+    .filter((word) => Boolean(word) && !['to', 'my', 'our', 'their', 'his', 'her'].includes(word.toLowerCase()))
+    .slice(0, 5);
+
+  if (words.length === 0) {
+    return toTitleCaseWords(name?.trim() || 'Project Workspace');
+  }
+
+  return toTitleCaseWords(words.join(' '));
+}
+
+export function slugifyProjectTitle(title: string): string {
+  return title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'project-workspace';
+}
+
 /**
  * Extract domain from URL
  */

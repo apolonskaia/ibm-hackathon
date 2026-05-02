@@ -196,10 +196,10 @@ export default function ClarifyPage() {
         <div className="flex justify-between items-center mb-2">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">
-              Clarification Dialog
+              Project Brief
             </h1>
             <p className="mt-1 text-sm text-gray-600">
-              A short back-and-forth to gather only the essential product and scale details before design options.
+              Capture the core project intent and answer a few focused questions before reviewing architecture options.
             </p>
           </div>
           <span className="text-sm text-gray-600">{progress}% Complete</span>
@@ -305,7 +305,7 @@ export default function ClarifyPage() {
                     variant="outline"
                     disabled={isLoading}
                   >
-                    Skip to Architecture
+                    Skip to Architecture Options
                   </Button>
                   <Button
                     onClick={handleSubmitAnswer}

@@ -4,16 +4,13 @@ import {
   DBProject, 
   DBConversation, 
   DBArchitecture, 
-  DBExport,
   Project,
   Message,
   ArchitectureOption,
-  ExportResult,
   ProjectHistorySummary,
   SkillLevel,
   ProjectStatus,
   MessageRole,
-  ExportFormat,
   Component,
   Justification
 } from '@/types';
@@ -98,7 +95,9 @@ function initializeSchema(): void {
       diagram TEXT,
       component_cache TEXT,
       justification_cache TEXT,
+      implementation_guide_cache TEXT,
       selected INTEGER NOT NULL DEFAULT 0,
+      display_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     )
@@ -115,6 +114,20 @@ function initializeSchema(): void {
   } catch (e) {
     // Column already exists, ignore error
   }
+
+  try {
+    db.exec(`ALTER TABLE architectures ADD COLUMN implementation_guide_cache TEXT`);
+  } catch (e) {
+    // Column already exists, ignore error
+  }
+
+  try {
+    db.exec(`ALTER TABLE architectures ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0`);
+  } catch (e) {
+    // Column already exists, ignore error
+  }
+
+  removeDuplicateArchitectureNames();
 
   // Exports table
   db.exec(`
@@ -136,7 +149,124 @@ function initializeSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_exports_project_id ON exports(project_id);
     CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
     CREATE INDEX IF NOT EXISTS idx_projects_created_at ON projects(created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_architectures_exact_unique
+      ON architectures(project_id, name, description, overview, tech_stack, pros, cons, complexity, estimated_cost);
   `);
+}
+
+function removeDuplicateArchitectureNames(): void {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT id, project_id, name, selected, display_order, created_at
+    FROM architectures
+    ORDER BY project_id ASC, LOWER(TRIM(name)) ASC, selected DESC, display_order ASC, created_at ASC, id ASC
+  `).all() as Array<{
+    id: string;
+    project_id: string;
+    name: string;
+    selected: number;
+    display_order: number | null;
+    created_at: string;
+  }>;
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const deleteIds: string[] = [];
+  const preferredOrderUpdates = new Map<string, number>();
+  const duplicateGroups = new Map<string, typeof rows>();
+
+  for (const row of rows) {
+    const groupKey = `${row.project_id}::${row.name.trim().toLowerCase()}`;
+    const group = duplicateGroups.get(groupKey) ?? [];
+    group.push(row);
+    duplicateGroups.set(groupKey, group);
+  }
+
+  for (const group of duplicateGroups.values()) {
+    if (group.length < 2) {
+      continue;
+    }
+
+    const canonical = group[0];
+    const preferredDisplayOrder = group.reduce((lowest, entry) => {
+      const displayOrder = entry.display_order ?? Number.MAX_SAFE_INTEGER;
+      return Math.min(lowest, displayOrder);
+    }, Number.MAX_SAFE_INTEGER);
+
+    if (preferredDisplayOrder !== Number.MAX_SAFE_INTEGER && (canonical.display_order ?? Number.MAX_SAFE_INTEGER) !== preferredDisplayOrder) {
+      preferredOrderUpdates.set(canonical.id, preferredDisplayOrder);
+    }
+
+    for (const duplicate of group.slice(1)) {
+      deleteIds.push(duplicate.id);
+    }
+  }
+
+  if (deleteIds.length === 0 && preferredOrderUpdates.size === 0) {
+    return;
+  }
+
+  const deleteStmt = db.prepare('DELETE FROM architectures WHERE id = ?');
+  const updateDisplayOrderStmt = db.prepare('UPDATE architectures SET display_order = ? WHERE id = ?');
+
+  const transaction = db.transaction(() => {
+    for (const [id, displayOrder] of preferredOrderUpdates.entries()) {
+      updateDisplayOrderStmt.run(displayOrder, id);
+    }
+
+    for (const id of deleteIds) {
+      deleteStmt.run(id);
+    }
+
+    const remainingRows = db.prepare(`
+      SELECT id, project_id
+      FROM architectures
+      ORDER BY project_id ASC, display_order ASC, created_at ASC, id ASC
+    `).all() as Array<{ id: string; project_id: string }>;
+
+    const nextOrderByProject = new Map<string, number>();
+    for (const row of remainingRows) {
+      const nextOrder = nextOrderByProject.get(row.project_id) ?? 0;
+      updateDisplayOrderStmt.run(nextOrder, row.id);
+      nextOrderByProject.set(row.project_id, nextOrder + 1);
+    }
+  });
+
+  transaction();
+}
+
+function findExactArchitectureMatch(architecture: Omit<ArchitectureOption, 'id' | 'createdAt'>): ArchitectureOption | null {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT *
+    FROM architectures
+    WHERE project_id = ?
+      AND name = ?
+      AND description = ?
+      AND overview = ?
+      AND tech_stack = ?
+      AND pros = ?
+      AND cons = ?
+      AND complexity = ?
+      AND estimated_cost = ?
+    LIMIT 1
+  `);
+
+  const row = stmt.get(
+    architecture.projectId,
+    architecture.name,
+    architecture.description,
+    architecture.overview,
+    JSON.stringify(architecture.techStack),
+    JSON.stringify(architecture.pros),
+    JSON.stringify(architecture.cons),
+    architecture.complexity,
+    architecture.estimatedCost
+  ) as DBArchitecture | undefined;
+
+  return row ? dbArchitectureToOption(row) : null;
 }
 
 /**
@@ -185,21 +315,8 @@ function dbArchitectureToOption(dbArch: DBArchitecture): ArchitectureOption {
     estimatedCost: dbArch.estimated_cost as 'low' | 'medium' | 'high',
     diagram: dbArch.diagram || undefined,
     selected: dbArch.selected === 1,
+    displayOrder: dbArch.display_order ?? 0,
     createdAt: dbArch.created_at,
-  };
-}
-
-/**
- * Convert DB export to ExportResult type
- */
-function dbExportToResult(dbExport: DBExport): ExportResult {
-  return {
-    id: dbExport.id,
-    projectId: dbExport.project_id,
-    format: dbExport.format as ExportFormat,
-    filename: dbExport.filename,
-    content: dbExport.content,
-    createdAt: dbExport.created_at,
   };
 }
 
@@ -260,7 +377,6 @@ export function getProjectHistorySummaries(): ProjectHistorySummary[] {
   const conversationCountStmt = db.prepare('SELECT COUNT(*) as count FROM conversations WHERE project_id = ?');
   const answeredQuestionCountStmt = db.prepare("SELECT COUNT(*) as count FROM conversations WHERE project_id = ? AND role = 'user'");
   const architectureCountStmt = db.prepare('SELECT COUNT(*) as count FROM architectures WHERE project_id = ?');
-  const exportCountStmt = db.prepare('SELECT COUNT(*) as count FROM exports WHERE project_id = ?');
   const selectedArchitectureStmt = db.prepare(`
     SELECT id, name, description, created_at
     FROM architectures
@@ -272,7 +388,6 @@ export function getProjectHistorySummaries(): ProjectHistorySummary[] {
     const conversationCount = (conversationCountStmt.get(project.id) as { count: number }).count;
     const answeredQuestionCount = (answeredQuestionCountStmt.get(project.id) as { count: number }).count;
     const architectureCount = (architectureCountStmt.get(project.id) as { count: number }).count;
-    const exportCount = (exportCountStmt.get(project.id) as { count: number }).count;
     const selectedArchitectureRow = selectedArchitectureStmt.get(project.id) as
       | { id: string; name: string; description: string; created_at: string }
       | undefined;
@@ -291,7 +406,6 @@ export function getProjectHistorySummaries(): ProjectHistorySummary[] {
       conversationCount,
       answeredQuestionCount,
       architectureCount,
-      exportCount,
       hasRequirements: Boolean(project.requirements),
       selectedArchitecture,
       resumePath: getProjectResumePath(project, architectureCount, Boolean(selectedArchitecture)),
@@ -388,17 +502,23 @@ export function deleteConversation(projectId: string): boolean {
 
 export function createArchitecture(architecture: Omit<ArchitectureOption, 'id' | 'createdAt'>): ArchitectureOption {
   const db = getDatabase();
+  const existingArchitecture = findExactArchitectureMatch(architecture);
+
+  if (existingArchitecture) {
+    return existingArchitecture;
+  }
+
   const id = `arch_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   const now = new Date().toISOString();
 
   const stmt = db.prepare(`
-    INSERT INTO architectures (
+    INSERT OR IGNORE INTO architectures (
       id, project_id, name, description, overview, tech_stack, pros, cons,
-      complexity, estimated_cost, diagram, selected, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      complexity, estimated_cost, diagram, selected, display_order, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  stmt.run(
+  const result = stmt.run(
     id,
     architecture.projectId,
     architecture.name,
@@ -411,8 +531,17 @@ export function createArchitecture(architecture: Omit<ArchitectureOption, 'id' |
     architecture.estimatedCost,
     architecture.diagram || null,
     architecture.selected ? 1 : 0,
+    architecture.displayOrder ?? 0,
     now
   );
+
+  if (result.changes === 0) {
+    const matchedArchitecture = findExactArchitectureMatch(architecture);
+
+    if (matchedArchitecture) {
+      return matchedArchitecture;
+    }
+  }
 
   return {
     id,
@@ -423,7 +552,7 @@ export function createArchitecture(architecture: Omit<ArchitectureOption, 'id' |
 
 export function getArchitectures(projectId: string): ArchitectureOption[] {
   const db = getDatabase();
-  const stmt = db.prepare('SELECT * FROM architectures WHERE project_id = ? ORDER BY created_at ASC');
+  const stmt = db.prepare('SELECT * FROM architectures WHERE project_id = ? ORDER BY display_order ASC, created_at ASC, id ASC');
   const rows = stmt.all(projectId) as DBArchitecture[];
   return rows.map(dbArchitectureToOption);
 }
@@ -433,6 +562,37 @@ export function getArchitecture(id: string): ArchitectureOption | null {
   const stmt = db.prepare('SELECT * FROM architectures WHERE id = ?');
   const row = stmt.get(id) as DBArchitecture | undefined;
   return row ? dbArchitectureToOption(row) : null;
+}
+
+export function reorderArchitectures(projectId: string, prioritizedArchitectureIds: string[]): void {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT id
+    FROM architectures
+    WHERE project_id = ?
+    ORDER BY display_order ASC, created_at ASC, id ASC
+  `).all(projectId) as Array<{ id: string }>;
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const uniquePrioritizedIds = prioritizedArchitectureIds.filter(
+    (id, index) => prioritizedArchitectureIds.indexOf(id) === index
+  );
+  const remainingIds = rows
+    .map((row) => row.id)
+    .filter((id) => !uniquePrioritizedIds.includes(id));
+  const orderedIds = [...uniquePrioritizedIds, ...remainingIds];
+  const updateStmt = db.prepare('UPDATE architectures SET display_order = ? WHERE id = ?');
+
+  const transaction = db.transaction(() => {
+    orderedIds.forEach((id, index) => {
+      updateStmt.run(index, id);
+    });
+  });
+
+  transaction();
 }
 
 export function deleteArchitectures(projectId: string): boolean {
@@ -536,45 +696,18 @@ export function saveArchitectureJustifications(architectureId: string, justifica
   return result.changes > 0;
 }
 
-// ============================================================================
-// Export Operations
-// ============================================================================
-
-export function createExport(exportData: Omit<ExportResult, 'id' | 'createdAt'>): ExportResult {
+export function getArchitectureImplementationGuide(architectureId: string): string | null {
   const db = getDatabase();
-  const id = `exp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-  const now = new Date().toISOString();
-
-  const stmt = db.prepare(`
-    INSERT INTO exports (id, project_id, format, filename, content, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  const content = typeof exportData.content === 'string' 
-    ? exportData.content 
-    : exportData.content.toString('base64');
-
-  stmt.run(id, exportData.projectId, exportData.format, exportData.filename, content, now);
-
-  return {
-    id,
-    ...exportData,
-    createdAt: now,
-  };
+  const stmt = db.prepare('SELECT implementation_guide_cache FROM architectures WHERE id = ?');
+  const row = stmt.get(architectureId) as { implementation_guide_cache?: string | null } | undefined;
+  return row?.implementation_guide_cache || null;
 }
 
-export function getExports(projectId: string): ExportResult[] {
+export function saveArchitectureImplementationGuide(architectureId: string, guide: string): boolean {
   const db = getDatabase();
-  const stmt = db.prepare('SELECT * FROM exports WHERE project_id = ? ORDER BY created_at DESC');
-  const rows = stmt.all(projectId) as DBExport[];
-  return rows.map(dbExportToResult);
-}
-
-export function getExport(id: string): ExportResult | null {
-  const db = getDatabase();
-  const stmt = db.prepare('SELECT * FROM exports WHERE id = ?');
-  const row = stmt.get(id) as DBExport | undefined;
-  return row ? dbExportToResult(row) : null;
+  const stmt = db.prepare('UPDATE architectures SET implementation_guide_cache = ? WHERE id = ?');
+  const result = stmt.run(guide, architectureId);
+  return result.changes > 0;
 }
 
 // ============================================================================
@@ -594,13 +727,11 @@ export function getDatabaseStats() {
   const projectCount = db.prepare('SELECT COUNT(*) as count FROM projects').get() as { count: number };
   const conversationCount = db.prepare('SELECT COUNT(*) as count FROM conversations').get() as { count: number };
   const architectureCount = db.prepare('SELECT COUNT(*) as count FROM architectures').get() as { count: number };
-  const exportCount = db.prepare('SELECT COUNT(*) as count FROM exports').get() as { count: number };
 
   return {
     projects: projectCount.count,
     conversations: conversationCount.count,
     architectures: architectureCount.count,
-    exports: exportCount.count,
   };
 }
 

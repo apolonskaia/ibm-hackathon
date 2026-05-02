@@ -1,26 +1,38 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Loading, LoadingPage } from '@/components/ui/loading';
-import { MermaidDiagram } from '@/components/visualization/mermaid-diagram';
-import { ArchitectureOption, Component, Justification } from '@/types';
+import { ArchitectureOption, Component, Justification, Project } from '@/types';
+import { deriveProjectTitle, slugifyProjectTitle } from '@/lib/utils';
 
-type DesignTab = 'overview' | 'justifications';
+const MermaidDiagram = dynamic(
+  () => import('@/components/visualization/mermaid-diagram').then((module) => module.MermaidDiagram),
+  {
+    ssr: false,
+    loading: () => <Loading text="Loading diagram..." />,
+  }
+);
+
+type DesignTab = 'overview' | 'justifications' | 'implementation-guide';
 
 export default function DesignPage() {
   const router = useRouter();
   const params = useParams();
   const projectId = params.id as string;
   
+  const [project, setProject] = useState<Project | null>(null);
   const [architecture, setArchitecture] = useState<ArchitectureOption | null>(null);
   const [components, setComponents] = useState<Component[]>([]);
   const [justifications, setJustifications] = useState<Justification[]>([]);
+  const [implementationGuide, setImplementationGuide] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingComponents, setIsLoadingComponents] = useState(false);
   const [isLoadingJustifications, setIsLoadingJustifications] = useState(false);
+  const [isLoadingImplementationGuide, setIsLoadingImplementationGuide] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<DesignTab>('overview');
 
@@ -49,24 +61,27 @@ export default function DesignPage() {
       setError('');
 
       try {
-        const projectResponse = await fetch(`/api/projects/${projectId}`);
+        const projectResponse = await fetch(`/api/projects/${projectId}`, { cache: 'no-store' });
         if (!projectResponse.ok) {
           throw new Error('Failed to load project');
         }
 
-        const { architectures } = await projectResponse.json();
+        const { project: loadedProject, architectures } = await projectResponse.json();
         const selectedArchitecture = architectures.find((option: ArchitectureOption) => option.selected) ?? null;
 
+        setProject(loadedProject ?? null);
         setArchitecture(selectedArchitecture);
 
         if (!selectedArchitecture) {
           setComponents([]);
           setJustifications([]);
+          setImplementationGuide('');
           return;
         }
 
         setComponents([]);
         setJustifications([]);
+        setImplementationGuide('');
         void loadComponents(selectedArchitecture);
       } catch (err) {
         setError('Failed to load architecture details. Please try again.');
@@ -105,9 +120,55 @@ export default function DesignPage() {
 
     void loadJustifications();
   }, [activeTab, architecture, isLoadingJustifications, justifications.length]);
+
+  useEffect(() => {
+    if (
+      activeTab !== 'implementation-guide' ||
+      !architecture ||
+      implementationGuide ||
+      isLoadingImplementationGuide
+    ) {
+      return;
+    }
+
+    const loadImplementationGuide = async () => {
+      setIsLoadingImplementationGuide(true);
+
+      try {
+        const response = await fetch(`/api/architecture/${architecture.id}/implementation-guide`, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error('Failed to load implementation guide');
+        }
+
+        const { guide } = await response.json();
+        setImplementationGuide(guide);
+      } catch (err) {
+        setError('Failed to load implementation guide. Please try again.');
+        console.error(err);
+      } finally {
+        setIsLoadingImplementationGuide(false);
+      }
+    };
+
+    void loadImplementationGuide();
+  }, [activeTab, architecture, implementationGuide, isLoadingImplementationGuide]);
   
-  const handleExport = () => {
-    router.push(`/project/${projectId}/export`);
+  const handleImplementationGuideExport = () => {
+    if (!implementationGuide || !architecture) {
+      return;
+    }
+
+    const projectTitle = deriveProjectTitle(project?.name, project?.description);
+    const filename = `${slugifyProjectTitle(projectTitle)}-${slugifyProjectTitle(architecture.name)}-implementation-guide.md`;
+    const blob = new Blob([implementationGuide], { type: 'text/markdown;charset=utf-8' });
+    const objectUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(objectUrl);
   };
   
   if (isLoading) {
@@ -126,21 +187,16 @@ export default function DesignPage() {
       </div>
     );
   }
-  
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
       {/* Header */}
       <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              {architecture.name}
-            </h1>
-            <p className="text-gray-600">{architecture.description}</p>
-          </div>
-          <Button onClick={handleExport} size="lg">
-            Export Documentation
-          </Button>
+        <div className="mb-4">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+            {architecture.name}
+          </h1>
+          <p className="text-gray-600">{architecture.description}</p>
         </div>
         
         {/* Tabs */}
@@ -149,6 +205,7 @@ export default function DesignPage() {
             {[
               { id: 'overview', label: 'Overview' },
               { id: 'justifications', label: 'Justifications' },
+              { id: 'implementation-guide', label: 'Implementation Guide' },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -378,6 +435,52 @@ export default function DesignPage() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {activeTab === 'implementation-guide' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Implementation Guide</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                A coding-agent-ready build plan for scaffolding the repo, populating code, and tracking work that must happen outside the repository.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={handleImplementationGuideExport}
+              disabled={!implementationGuide || isLoadingImplementationGuide}
+            >
+              Export Guide
+            </Button>
+          </div>
+
+          {isLoadingImplementationGuide && (
+            <Card>
+              <CardContent className="p-8">
+                <Loading text="Generating implementation guide..." />
+              </CardContent>
+            </Card>
+          )}
+
+          {!isLoadingImplementationGuide && !implementationGuide && (
+            <Card>
+              <CardContent className="p-8 text-center text-gray-600">
+                Implementation guidance is not available yet.
+              </CardContent>
+            </Card>
+          )}
+
+          {implementationGuide && (
+            <Card>
+              <CardContent className="p-0">
+                <pre className="overflow-x-auto whitespace-pre-wrap rounded-xl bg-slate-950 p-6 text-sm leading-7 text-slate-100">
+                  {implementationGuide}
+                </pre>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
     </div>

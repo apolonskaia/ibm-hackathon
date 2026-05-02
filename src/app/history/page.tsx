@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 import { LoadingPage } from '@/components/ui/loading';
 import { ProjectHistorySummary, ProjectStatus } from '@/types';
+import { deriveProjectTitle } from '@/lib/utils';
 
 const statusLabels: Record<ProjectStatus, string> = {
   created: 'Not started',
@@ -92,7 +93,7 @@ export default function ProjectHistoryPage() {
         isOpen={Boolean(pendingDeleteProject)}
         title="Delete project"
         description={pendingDeleteProject
-          ? `Delete "${pendingDeleteProject.project.name}"? This will remove its saved clarification history, architecture options, diagrams, and exports.`
+          ? `Delete "${deriveProjectTitle(pendingDeleteProject.project.name, pendingDeleteProject.project.description)}"? This will remove its saved clarification history, architecture options, and generated design artifacts.`
           : ''}
         confirmLabel="Delete project"
         cancelLabel="Keep project"
@@ -142,7 +143,9 @@ export default function ProjectHistoryPage() {
               <CardHeader>
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <CardTitle className="text-xl text-gray-900">{entry.project.name}</CardTitle>
+                    <CardTitle className="text-xl text-gray-900">
+                      {deriveProjectTitle(entry.project.name, entry.project.description)}
+                    </CardTitle>
                     <p className="mt-2 text-sm text-gray-600">{entry.project.description}</p>
                   </div>
                   <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusClasses[entry.project.status]}`}>
@@ -160,10 +163,6 @@ export default function ProjectHistoryPage() {
                   <div className="rounded-lg bg-gray-50 p-3">
                     <div className="text-gray-500">Architecture options</div>
                     <div className="mt-1 font-medium text-gray-900">{entry.architectureCount}</div>
-                  </div>
-                  <div className="rounded-lg bg-gray-50 p-3">
-                    <div className="text-gray-500">Exports</div>
-                    <div className="mt-1 font-medium text-gray-900">{entry.exportCount}</div>
                   </div>
                 </div>
 

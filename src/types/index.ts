@@ -27,7 +27,6 @@ export interface ProjectHistorySummary {
   conversationCount: number;
   answeredQuestionCount: number;
   architectureCount: number;
-  exportCount: number;
   hasRequirements: boolean;
   selectedArchitecture?: {
     id: string;
@@ -93,7 +92,35 @@ export interface ArchitectureOption {
   estimatedCost: 'low' | 'medium' | 'high';
   diagram?: string; // Mermaid diagram code
   selected: boolean;
+  displayOrder?: number;
   createdAt: string;
+}
+
+export type ArchitectureGraphLayer = 'experience' | 'application' | 'data' | 'platform';
+
+export interface ArchitectureGraphNode {
+  id: string;
+  title: string;
+  subtitle?: string;
+  layer: ArchitectureGraphLayer;
+  category: string;
+  className: string;
+  componentName?: string;
+}
+
+export interface ArchitectureGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  rationale?: string;
+}
+
+export interface ArchitectureGraph {
+  title: string;
+  description?: string;
+  nodes: ArchitectureGraphNode[];
+  edges: ArchitectureGraphEdge[];
 }
 
 // Component breakdown
@@ -103,9 +130,13 @@ export interface Component {
   name: string;
   type: 'frontend' | 'backend' | 'database' | 'service' | 'infrastructure' | 'workflow' | 'compute' | 'storage' | 'orchestration' | 'analytics';
   description: string;
+  beginnerExplanation?: string;
+  diagramRole?: string;
   responsibilities: string[];
   technologies: string[];
   dependencies: string[];
+  inputFrom?: string[];
+  outputTo?: string[];
   apis?: APIEndpoint[];
   dataModels?: DataModel[];
 }
@@ -172,31 +203,6 @@ export interface Diagram {
   createdAt: string;
 }
 
-// Export formats
-export type ExportFormat = 
-  | 'markdown'
-  | 'pdf'
-  | 'json'
-  | 'html'
-  | 'png';
-
-export interface ExportOptions {
-  format: ExportFormat;
-  includeDiagrams: boolean;
-  includeJustifications: boolean;
-  includeComponents: boolean;
-  includeConversation: boolean;
-}
-
-export interface ExportResult {
-  id: string;
-  projectId: string;
-  format: ExportFormat;
-  filename: string;
-  content: string | Buffer;
-  createdAt: string;
-}
-
 // API request/response types
 export interface CreateProjectRequest {
   name: string;
@@ -233,6 +239,7 @@ export interface CompleteClarificationResponse {
 export interface GenerateArchitectureRequest {
   projectId: string;
   requirements: RequirementsSummary;
+  append?: boolean;
 }
 
 export interface GenerateArchitectureResponse {
@@ -337,16 +344,9 @@ export interface DBArchitecture {
   diagram: string | null;
   component_cache?: string | null;
   justification_cache?: string | null;
+  implementation_guide_cache?: string | null;
   selected: number; // SQLite boolean (0 or 1)
-  created_at: string;
-}
-
-export interface DBExport {
-  id: string;
-  project_id: string;
-  format: ExportFormat;
-  filename: string;
-  content: string;
+  display_order?: number;
   created_at: string;
 }
 

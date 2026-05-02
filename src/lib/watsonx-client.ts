@@ -637,11 +637,12 @@ ${domainPresetGuidance}
 First, infer what kind of system this is. It may be a web app, mobile app, desktop app, API product, internal tool, data pipeline, bioinformatics workflow, ETL system, analytics platform, ML workflow, batch processing system, scientific computing workflow, or something else.
 Do not force the project into a generic web-application shape if the request points to a pipeline, scientific workflow, or other non-app system.
 Choose architecture patterns and technologies that actually fit the domain.
+Treat this as a best-effort architecture review, not a brainstorming exercise. The options must be credible implementation candidates for this exact project.
 
 For each option, provide:
 1. A unique name that fits the project type (for example, web-app patterns for apps, or workflow/pipeline/platform patterns for data and scientific systems)
 2. Brief description (2-3 sentences)
-3. Detailed overview (1 paragraph)
+3. Detailed overview (1 paragraph) that clearly explains why this option fits the project goals, constraints, and likely usage pattern
 4. Technology stack as a JSON object with only the categories that make sense for this project. Common categories include frontend, backend, database, infrastructure, orchestration, workflow, compute, storage, analytics, bioinformatics_tools, observability, security, integrations, and tools.
 5. 3-4 pros
 6. 3-4 cons
@@ -650,6 +651,8 @@ For each option, provide:
 
 If this is a pipeline or scientific workflow, prefer architecture options such as orchestrated batch pipelines, workflow-engine-based systems, reproducible containerized compute pipelines, HPC-compatible execution, or hybrid cloud processing where appropriate.
 For bioinformatics specifically, pay attention to data volumes, reproducibility, workflow orchestration, storage layout, compute environment, reference data management, and integration with domain tools.
+The 3 options should be meaningfully different in tradeoffs, for example one optimized for simplicity, one for scale/flexibility, and one for operational rigor or reproducibility when that distinction makes sense.
+Avoid generic filler. Pros and cons must be specific to this project rather than broad statements that apply to almost any architecture.
 
 Return a JSON array with 3 options. Each option should have this structure:
 {
@@ -728,15 +731,13 @@ Include:
 Return ONLY the Mermaid code, starting with 'graph TB' and nothing else. No markdown code blocks, no explanations.`;
 
   const diagram = await generateText(prompt, DEFAULT_CODE_MODEL, PARAMETERS.CODE);
-  
-  // Clean up the response to ensure it's valid Mermaid
+
   let cleaned = normalizeMermaidDiagram(diagram);
-  
-  // Ensure it starts with graph TB
+
   if (!cleaned.startsWith('graph TB') && !cleaned.startsWith('graph TD')) {
     cleaned = 'graph TB\n' + cleaned;
   }
-  
+
   return cleaned;
 }
 
@@ -767,13 +768,20 @@ Generate 5-8 components with the following structure for each:
   "name": "Component Name",
   "type": "frontend|backend|database|service|infrastructure|workflow|compute|storage|orchestration|analytics",
   "description": "What this component does",
+  "beginnerExplanation": "A plain-language explanation of this block for a beginner programmer",
+  "diagramRole": "How this block appears or behaves in the architecture diagram",
   "responsibilities": ["responsibility1", "responsibility2"],
   "technologies": ["tech1", "tech2"],
-  "dependencies": ["component1", "component2"]
+  "dependencies": ["component1", "component2"],
+  "inputFrom": ["upstream block 1", "upstream block 2"],
+  "outputTo": ["downstream block 1", "downstream block 2"]
 }
 
 The "description" and "responsibilities" fields should match the requested explanation style.
 If the system is a pipeline or scientific workflow, components should reflect stages such as ingestion, orchestration, compute, reference-data management, storage, reporting, and monitoring rather than forcing a UI-centric decomposition.
+Make the component list line up with the major blocks that should appear in the architecture diagram. The component names should closely match those diagram blocks whenever practical.
+The "beginnerExplanation" field should explain why the block exists and what would break if it were missing.
+The "diagramRole" field should help the UI explain how to read that block in the system diagram.
 
 Return a JSON array of components. Return only valid JSON, no additional text.`;
 
@@ -865,6 +873,73 @@ Return a JSON array. Return only valid JSON, no additional text.`;
     console.error('Failed to parse justifications:', error);
     return [];
   }
+}
+
+/**
+ * Generate implementation guide
+ */
+export async function generateImplementationGuide(
+  projectDescription: string,
+  architectureName: string,
+  architectureOverview: string,
+  techStack: any,
+  requirements: any,
+  components: any[],
+  justifications: any[],
+  skillLevel: SkillLevel = 'beginner'
+): Promise<string> {
+  const explanationStyleGuidance = getExplanationStyleGuidance(skillLevel);
+  const domainPresetGuidance = formatDomainPresetGuidance(`${projectDescription}\n${architectureName}\n${architectureOverview}`);
+  const prompt = `Create an implementation guide for a coding agent like Bob or Copilot.
+
+Project Description: ${projectDescription}
+Selected Architecture: ${architectureName}
+Architecture Overview: ${architectureOverview}
+Tech Stack: ${JSON.stringify(techStack)}
+Requirements: ${JSON.stringify(requirements)}
+Components: ${JSON.stringify(components)}
+Justifications: ${JSON.stringify(justifications)}
+Audience Skill Level: ${skillLevel}
+Explanation Style:
+${explanationStyleGuidance}
+Domain Preset Guidance:
+${domainPresetGuidance}
+
+Return markdown only.
+
+The guide must be practical instructions a coding agent can follow to start a repo and populate the codebase. It must also clearly separate work that needs to happen outside the repo.
+
+Include these sections in order:
+1. # Implementation Guide
+2. ## Build Goal
+3. ## Repo Setup Instructions
+4. ## Suggested Repository Structure
+5. ## Delivery Plan
+6. ## Implementation Tasks For The Coding Agent
+7. ## Work Required Outside The Repo
+8. ## Environment Variables And Secrets
+9. ## Validation Checklist
+10. ## Handoff Notes
+
+Requirements for the content:
+- Be specific to this project and selected architecture, not generic advice.
+- In Repo Setup Instructions, tell the agent what framework/runtime/database/infrastructure choices to scaffold.
+- In Suggested Repository Structure, include a concrete folder layout in a markdown code block.
+- In Delivery Plan, break implementation into phases with clear order.
+- In Implementation Tasks For The Coding Agent, use numbered steps with enough detail that the agent can begin writing code immediately.
+- In Work Required Outside The Repo, include infrastructure provisioning, accounts, cloud services, DNS, secrets, deployments, third-party integrations, compliance, and operational setup when relevant.
+- In Environment Variables And Secrets, list actual variable names the repo should expect.
+- In Validation Checklist, include tests, manual checks, and deployment verification.
+- Mention any major tradeoffs from the architecture justifications when they affect implementation order or operational setup.
+
+Do not wrap the response in code fences. Return only markdown.`;
+
+  const response = await generateText(prompt, DEFAULT_TEXT_MODEL, {
+    ...PARAMETERS.TECHNICAL,
+    max_new_tokens: 3500,
+  });
+
+  return response.trim();
 }
 
 /**
