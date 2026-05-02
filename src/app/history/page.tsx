@@ -110,15 +110,8 @@ export default function ProjectHistoryPage() {
         }}
       />
 
-      <div className="mb-8 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Project History</h1>
-          <p className="mt-2 text-gray-600">
-            Resume any saved project from its last completed step. Existing clarification, architecture,
-            and design data are reused instead of regenerated.
-          </p>
-        </div>
-        <Button onClick={() => router.push('/')}>Start New Project</Button>
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900">Project History</h1>
       </div>
 
       {error && (
@@ -140,13 +133,13 @@ export default function ProjectHistoryPage() {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {projects.map((entry) => (
             <Card key={entry.project.id} className="border-gray-200">
-              <CardHeader className="pb-3">
+              <CardHeader className="border-b-0 pb-3">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <CardTitle className="text-lg text-gray-900 leading-tight">
                       {deriveProjectTitle(entry.project.name, entry.project.description)}
                     </CardTitle>
-                    <p className="mt-1 line-clamp-2 text-sm text-gray-600">{entry.project.description}</p>
+                    <p className="mt-3 line-clamp-2 text-sm text-gray-600">{entry.project.description}</p>
                   </div>
                   <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClasses[entry.project.status]}`}>
                     {statusLabels[entry.project.status]}
@@ -155,17 +148,6 @@ export default function ProjectHistoryPage() {
               </CardHeader>
 
               <CardContent className="space-y-4 pt-0">
-                <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-3">
-                  <div className="rounded-lg bg-gray-50 p-2.5">
-                    <div className="text-gray-500">Answers saved</div>
-                    <div className="mt-0.5 font-medium text-gray-900">{entry.answeredQuestionCount}</div>
-                  </div>
-                  <div className="rounded-lg bg-gray-50 p-2.5">
-                    <div className="text-gray-500">Architecture options</div>
-                    <div className="mt-0.5 font-medium text-gray-900">{entry.architectureCount}</div>
-                  </div>
-                </div>
-
                 <div className="space-y-1.5 text-sm text-gray-700">
                   <p className="leading-snug">
                     <span className="font-medium text-gray-900">Requirements captured:</span>{' '}
@@ -187,16 +169,24 @@ export default function ProjectHistoryPage() {
                   )}
                 </div>
 
-                <div className="flex justify-end gap-3 border-t border-gray-100 pt-3">
-                    <Button
-                      variant="outline"
-                      className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300"
-                      onClick={() => setPendingDeleteProject(entry)}
-                      isLoading={deletingProjectId === entry.project.id}
-                    >
-                      Delete
-                    </Button>
-                    <Button onClick={() => router.push(entry.resumePath)}>Go to Progect</Button>
+                <div className="flex justify-end gap-3 pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300"
+                    onClick={() => setPendingDeleteProject(entry)}
+                    isLoading={deletingProjectId === entry.project.id}
+                  >
+                    Delete
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300"
+                    onClick={() => router.push(entry.resumePath)}
+                  >
+                    Go to Project
+                  </Button>
                 </div>
               </CardContent>
             </Card>
