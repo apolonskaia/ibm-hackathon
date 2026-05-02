@@ -67,11 +67,15 @@ export async function POST(request: NextRequest) {
             .filter((value): value is string[] => Array.isArray(value))
             .flat();
 
-          diagram = await generateMermaidDiagram(
-            option.name,
+          diagram = await generateMermaidDiagram({
+            architectureName: option.name,
+            description: option.description,
+            overview: option.overview,
+            techStack: option.techStack,
             components,
-            option.overview
-          );
+            requirements,
+            skillLevel: project.skillLevel,
+          });
         } catch (error) {
           console.error('Error generating diagram:', error);
           // Continue without diagram if generation fails

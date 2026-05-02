@@ -1,7 +1,7 @@
 import { WatsonXAI } from '@ibm-cloud/watsonx-ai';
 import { IamAuthenticator } from '@ibm-cloud/watsonx-ai/authentication';
-import { normalizeMermaidDiagram } from '@/lib/mermaid';
-import { SkillLevel, WatsonXConfig, WatsonXRequest, WatsonXResponse } from '@/types';
+import { extractMermaidNodeLabels, normalizeMermaidDiagram, normalizeMermaidLabel } from '@/lib/mermaid';
+import { RequirementsSummary, SkillLevel, TechStack, WatsonXConfig, WatsonXRequest, WatsonXResponse } from '@/types';
 import { retryWithBackoff } from './utils';
 
 // Configuration from environment variables
@@ -76,6 +76,21 @@ interface DomainPreset {
 
 const DEFAULT_TEXT_MODEL = MODELS.GRANITE_8B_INSTRUCT;
 const DEFAULT_CODE_MODEL = MODELS.GRANITE_8B_INSTRUCT;
+
+interface MermaidGenerationInput {
+  architectureName: string;
+  description: string;
+  overview?: string;
+  techStack?: TechStack;
+  components?: string[];
+  requirements?: RequirementsSummary;
+  skillLevel?: SkillLevel;
+}
+
+interface DiagramCoverageAssessment {
+  score: number;
+  missingExpectedLabels: string[];
+}
 
 const DOMAIN_PRESETS: DomainPreset[] = [
   {
@@ -716,34 +731,229 @@ Return only valid JSON array, no additional text.`;
  * Generate Mermaid diagram
  */
 export async function generateMermaidDiagram(
-  architectureName: string,
-  components: string[],
-  description: string
+  input: MermaidGenerationInput
 ): Promise<string> {
+  const expectedLabels = extractExpectedDiagramLabels(input);
+  const blueprint = buildDiagramBlueprint(input);
   const prompt = `Generate a Mermaid diagram for the following system architecture.
 
-Architecture: ${architectureName}
-Description: ${description}
-Components: ${components.join(', ')}
+Architecture: ${input.architectureName}
+Description: ${input.description}
+Overview: ${input.overview ?? input.description}
+Audience Skill Level: ${input.skillLevel ?? 'beginner'}
+Tech Stack: ${JSON.stringify(input.techStack ?? {})}
+Expected Blocks: ${expectedLabels.join(', ')}
+Requirements Summary: ${formatDiagramRequirements(input.requirements)}
 
-Create a clear, well-structured Mermaid diagram using the 'graph TB' (top-bottom) format.
-Include:
-- All major components
-- Connections between components
-- Subgraphs for logical grouping
-- Clear labels
+Blueprint:
+${blueprint}
 
-Return ONLY the Mermaid code, starting with 'graph TB' and nothing else. No markdown code blocks, no explanations.`;
+Create a clear Mermaid graph using 'graph TB'.
+Rules:
+- Include the major blocks listed in Expected Blocks unless a block would be a duplicate label.
+- Use exact or near-exact labels from the expected blocks. Do not invent unrelated technologies or placeholders.
+- Group related blocks with subgraphs when that improves readability.
+- Show the main flow between user-facing, application, data, workflow, compute, and platform blocks when those layers exist.
+- Keep node labels single-line.
+- Prefer one node per major block instead of many tiny implementation details.
+- Return valid Mermaid only. No markdown fences. No explanations.
+
+Return ONLY the Mermaid code, starting with 'graph TB' and nothing else.`;
 
   const diagram = await generateText(prompt, DEFAULT_CODE_MODEL, PARAMETERS.CODE);
+  let cleaned = finalizeGeneratedDiagram(diagram);
+  let coverage = assessDiagramCoverage(cleaned, expectedLabels);
 
-  let cleaned = normalizeMermaidDiagram(diagram);
+  if (coverage.score < 0.6 && coverage.missingExpectedLabels.length > 0) {
+    const repairPrompt = `Repair this Mermaid diagram so it better reflects the intended architecture.
 
-  if (!cleaned.startsWith('graph TB') && !cleaned.startsWith('graph TD')) {
-    cleaned = 'graph TB\n' + cleaned;
+Architecture: ${input.architectureName}
+Overview: ${input.overview ?? input.description}
+Expected Blocks: ${expectedLabels.join(', ')}
+Missing Blocks That Must Be Reflected: ${coverage.missingExpectedLabels.join(', ')}
+
+Current Mermaid:
+${cleaned}
+
+Requirements:
+- Keep graph TB format.
+- Preserve any accurate structure already present.
+- Add or rename blocks so the missing expected blocks are represented.
+- Do not add unrelated services or technologies.
+- Return only Mermaid code.`;
+
+    const repairedDiagram = await generateText(repairPrompt, DEFAULT_CODE_MODEL, PARAMETERS.CODE);
+    cleaned = finalizeGeneratedDiagram(repairedDiagram);
+    coverage = assessDiagramCoverage(cleaned, expectedLabels);
+  }
+
+  if (coverage.score < 0.45) {
+    return buildFallbackMermaidDiagram(input);
   }
 
   return cleaned;
+}
+
+function finalizeGeneratedDiagram(diagram: string): string {
+  let cleaned = normalizeMermaidDiagram(diagram);
+
+  if (!cleaned.startsWith('graph TB') && !cleaned.startsWith('graph TD')) {
+    cleaned = `graph TB\n${cleaned}`;
+  }
+
+  return cleaned;
+}
+
+function formatDiagramRequirements(requirements?: RequirementsSummary): string {
+  if (!requirements) {
+    return 'Not provided';
+  }
+
+  return [
+    `Functional: ${requirements.functionalRequirements.join(', ') || 'None'}`,
+    `Non-Functional: ${requirements.nonFunctionalRequirements.join(', ') || 'None'}`,
+    `Constraints: ${requirements.constraints.join(', ') || 'None'}`,
+    `Assumptions: ${requirements.assumptions.join(', ') || 'None'}`,
+    `Key Features: ${requirements.keyFeatures.join(', ') || 'None'}`,
+  ].join('\n');
+}
+
+function buildDiagramBlueprint(input: MermaidGenerationInput): string {
+  const groupedEntries = Object.entries(input.techStack ?? {})
+    .filter(([, values]) => Array.isArray(values) && values.length > 0)
+    .map(([category, values]) => `${humanizeCategory(category)}: ${(values ?? []).join(', ')}`);
+
+  if (groupedEntries.length === 0 && (input.components?.length ?? 0) > 0) {
+    return `Core blocks: ${input.components?.join(', ')}`;
+  }
+
+  return groupedEntries.join('\n');
+}
+
+function humanizeCategory(category: string): string {
+  return category
+    .split(/[_-]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function extractExpectedDiagramLabels(input: MermaidGenerationInput): string[] {
+  const techStackLabels = Object.values(input.techStack ?? {})
+    .filter((value): value is string[] => Array.isArray(value))
+    .flat();
+
+  return dedupeStrings([
+    ...(input.components ?? []),
+    ...techStackLabels,
+  ]).slice(0, 14);
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    const trimmedValue = value.trim();
+    if (!trimmedValue) {
+      continue;
+    }
+
+    const normalizedValue = normalizeMermaidLabel(trimmedValue);
+    if (seen.has(normalizedValue)) {
+      continue;
+    }
+
+    seen.add(normalizedValue);
+    result.push(trimmedValue);
+  }
+
+  return result;
+}
+
+function extractRenderedDiagramLabels(code: string): string[] {
+  return dedupeStrings(extractMermaidNodeLabels(code));
+}
+
+function assessDiagramCoverage(code: string, expectedLabels: string[]): DiagramCoverageAssessment {
+  if (expectedLabels.length === 0) {
+    return {
+      score: 1,
+      missingExpectedLabels: [],
+    };
+  }
+
+  const renderedLabels = extractRenderedDiagramLabels(code).map(normalizeMermaidLabel);
+  const missingExpectedLabels = expectedLabels.filter((expectedLabel) => {
+    const normalizedExpected = normalizeMermaidLabel(expectedLabel);
+    return !renderedLabels.some((renderedLabel) => renderedLabel.includes(normalizedExpected) || normalizedExpected.includes(renderedLabel));
+  });
+
+  return {
+    score: (expectedLabels.length - missingExpectedLabels.length) / expectedLabels.length,
+    missingExpectedLabels,
+  };
+}
+
+function buildFallbackMermaidDiagram(input: MermaidGenerationInput): string {
+  const groupedTechStack = Object.entries(input.techStack ?? {})
+    .filter(([, values]) => Array.isArray(values) && values.length > 0) as Array<[string, string[]]>;
+  const fallbackGroups: Array<[string, string[]]> = groupedTechStack.length > 0
+    ? groupedTechStack
+    : [['system', dedupeStrings(input.components ?? []).slice(0, 8)]];
+  const lines: string[] = ['graph TB'];
+  const anchorId = sanitizeDiagramNodeId(input.architectureName || 'architecture');
+  const groupAnchors: string[] = [];
+
+  lines.push(`${anchorId}["${escapeDiagramLabel(input.architectureName)}"]`);
+
+  fallbackGroups.forEach(([category, items], categoryIndex) => {
+    const subgraphId = `${sanitizeDiagramNodeId(category)}_group_${categoryIndex}`;
+    const firstNodeId = `${sanitizeDiagramNodeId(category)}_${categoryIndex}_0`;
+    groupAnchors.push(firstNodeId);
+
+    lines.push(`subgraph ${subgraphId}["${escapeDiagramLabel(humanizeCategory(category))}"]`);
+
+    items.forEach((item, itemIndex) => {
+      const nodeId = `${sanitizeDiagramNodeId(category)}_${categoryIndex}_${itemIndex}`;
+      lines.push(`  ${nodeId}["${escapeDiagramLabel(item)}"]`);
+
+      if (itemIndex > 0) {
+        const previousNodeId = `${sanitizeDiagramNodeId(category)}_${categoryIndex}_${itemIndex - 1}`;
+        lines.push(`  ${previousNodeId} --> ${nodeId}`);
+      }
+    });
+
+    lines.push('end');
+  });
+
+  if (groupAnchors.length > 0) {
+    lines.push(`${anchorId} --> ${groupAnchors[0]}`);
+  }
+
+  for (let index = 0; index < groupAnchors.length - 1; index += 1) {
+    lines.push(`${groupAnchors[index]} --> ${groupAnchors[index + 1]}`);
+  }
+
+  return finalizeGeneratedDiagram(lines.join('\n'));
+}
+
+function sanitizeDiagramNodeId(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^A-Za-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (!sanitized) {
+    return 'node';
+  }
+
+  return /^\d/.test(sanitized) ? `node_${sanitized}` : sanitized;
+}
+
+function escapeDiagramLabel(value: string): string {
+  return value.replace(/"/g, "'");
 }
 
 /**
@@ -753,15 +963,20 @@ export async function generateComponentBreakdown(
   architectureName: string,
   techStack: any,
   overview: string,
-  skillLevel: SkillLevel = 'beginner'
+  skillLevel: SkillLevel = 'beginner',
+  diagramCode?: string
 ): Promise<any[]> {
   const explanationStyleGuidance = getExplanationStyleGuidance(skillLevel);
   const domainPresetGuidance = formatDomainPresetGuidance(`${architectureName} ${overview}`);
+  const diagramLabels = diagramCode ? extractMermaidNodeLabels(diagramCode) : [];
   const prompt = `Generate a detailed component breakdown for this architecture.
 
 Architecture: ${architectureName}
 Overview: ${overview}
 Tech Stack: ${JSON.stringify(techStack)}
+Diagram Blocks: ${diagramLabels.join(', ') || 'Not available'}
+Mermaid Diagram:
+${diagramCode ?? 'Not available'}
 Audience Skill Level: ${skillLevel}
 Explanation Style:
 ${explanationStyleGuidance}
@@ -785,6 +1000,7 @@ Generate 5-8 components with the following structure for each:
 The "description" and "responsibilities" fields should match the requested explanation style.
 If the system is a pipeline or scientific workflow, components should reflect stages such as ingestion, orchestration, compute, reference-data management, storage, reporting, and monitoring rather than forcing a UI-centric decomposition.
 Make the component list line up with the major blocks that should appear in the architecture diagram. The component names should closely match those diagram blocks whenever practical.
+When Diagram Blocks are provided, make the component names and technologies clearly reflect those exact blocks. Do not collapse distinct diagram blocks like AWS Lambda, DynamoDB, AWS S3, CI/CD, or React Native App into vague umbrella names such as Backend, Database, or User Interface.
 The "beginnerExplanation" field should explain why the block exists and what would break if it were missing.
 The "diagramRole" field should help the UI explain how to read that block in the system diagram.
 
@@ -800,11 +1016,66 @@ Return a JSON array of components. Return only valid JSON, no additional text.`;
     if (!jsonMatch) {
       throw new Error('No JSON array found in response');
     }
-    return JSON.parse(jsonMatch[0]);
+    let components = JSON.parse(jsonMatch[0]);
+    let coverage = assessComponentDiagramCoverage(components, diagramLabels);
+
+    if (diagramLabels.length > 0 && coverage.score < 0.55 && coverage.missingLabels.length > 0) {
+      const repairPrompt = `Repair this component breakdown so it matches the actual Mermaid diagram.
+
+Architecture: ${architectureName}
+Overview: ${overview}
+Diagram Blocks: ${diagramLabels.join(', ')}
+Missing Diagram Blocks In Current Breakdown: ${coverage.missingLabels.join(', ')}
+Current Breakdown JSON:
+${JSON.stringify(components)}
+
+Requirements:
+- Return a JSON array only.
+- Keep existing good items when possible.
+- Rename or split vague items so the breakdown reflects the specific diagram blocks.
+- Make component names and technologies align with the Mermaid diagram labels.
+- Avoid umbrella labels like Backend or Database when the diagram shows more specific services.`;
+
+      const repairedResponse = await generateText(repairPrompt, DEFAULT_TEXT_MODEL, {
+        ...PARAMETERS.TECHNICAL,
+        max_new_tokens: 2500,
+      });
+      const repairedJsonMatch = repairedResponse.match(/\[[\s\S]*\]/);
+
+      if (repairedJsonMatch) {
+        components = JSON.parse(repairedJsonMatch[0]);
+      }
+    }
+
+    return components;
   } catch (error) {
     console.error('Failed to parse component breakdown:', error);
     return [];
   }
+}
+
+function assessComponentDiagramCoverage(components: any[], diagramLabels: string[]): { score: number; missingLabels: string[] } {
+  if (diagramLabels.length === 0) {
+    return { score: 1, missingLabels: [] };
+  }
+
+  const normalizedCoverageTerms = components.flatMap((component) => {
+    const terms = [component?.name, ...(Array.isArray(component?.technologies) ? component.technologies : [])]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .map((value) => normalizeMermaidLabel(value));
+
+    return terms;
+  });
+
+  const missingLabels = diagramLabels.filter((label) => {
+    const normalizedLabel = normalizeMermaidLabel(label);
+    return !normalizedCoverageTerms.some((term) => term.includes(normalizedLabel) || normalizedLabel.includes(term));
+  });
+
+  return {
+    score: (diagramLabels.length - missingLabels.length) / diagramLabels.length,
+    missingLabels,
+  };
 }
 
 /**

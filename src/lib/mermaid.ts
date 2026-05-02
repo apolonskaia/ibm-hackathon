@@ -199,3 +199,36 @@ export function normalizeMermaidDiagram(code: string): string {
 
   return normalizedDiagram;
 }
+
+export function normalizeMermaidLabel(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+export function extractMermaidNodeLabels(code: string): string[] {
+  const normalizedCode = normalizeMermaidDiagram(code);
+  const matches = Array.from(normalizedCode.matchAll(/\b[A-Za-z0-9_]+\s*(?:\["([^"]+)"\]|\['([^']+)'\]|\[([^\]]+)\]|\("([^"]+)"\)|\('([^']+)'\)|\(([^)]+)\)|\{"([^"]+)"\}|\{([^}]+)\})/g));
+  const seen = new Set<string>();
+  const labels: string[] = [];
+
+  for (const match of matches) {
+    const label = match.slice(1).find((value) => value && value.trim());
+
+    if (!label) {
+      continue;
+    }
+
+    const normalizedLabel = normalizeMermaidLabel(label);
+    if (!normalizedLabel || seen.has(normalizedLabel)) {
+      continue;
+    }
+
+    seen.add(normalizedLabel);
+    labels.push(label);
+  }
+
+  return labels;
+}

@@ -13,6 +13,19 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({ code, className 
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState(1);
+
+  const handleZoomIn = () => {
+    setZoomLevel((currentZoomLevel) => Math.min(2, Number((currentZoomLevel + 0.1).toFixed(2))));
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel((currentZoomLevel) => Math.max(0.6, Number((currentZoomLevel - 0.1).toFixed(2))));
+  };
+
+  const handleZoomReset = () => {
+    setZoomLevel(1);
+  };
   
   useEffect(() => {
     // Initialize mermaid
@@ -25,6 +38,8 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({ code, className 
   }, []);
   
   useEffect(() => {
+    setZoomLevel(1);
+
     const renderDiagram = async () => {
       if (!containerRef.current) {
         return;
@@ -73,13 +88,48 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({ code, className 
   
   return (
     <div className={`relative min-h-40 ${className ?? ''}`}>
-      <div
-        ref={containerRef}
-        className={`mermaid-container flex items-center justify-center p-6 bg-white rounded-lg border border-gray-200 ${isLoading || error ? 'invisible' : ''}`}
-      />
+      <div className="mb-3 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          aria-label="Zoom out diagram"
+        >
+          -
+        </button>
+        <button
+          type="button"
+          onClick={handleZoomReset}
+          className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          aria-label="Reset diagram zoom"
+        >
+          {Math.round(zoomLevel * 100)}%
+        </button>
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          aria-label="Zoom in diagram"
+        >
+          +
+        </button>
+      </div>
+
+      <div className="overflow-auto rounded-lg border border-gray-200 bg-white" style={{ maxHeight: '70vh' }}>
+        <div className={`flex min-h-40 min-w-full items-start justify-center p-6 ${isLoading || error ? 'invisible' : ''}`}>
+          <div
+            ref={containerRef}
+            className="mermaid-container inline-block"
+            style={{
+              width: `${Math.round(zoomLevel * 100)}%`,
+              minWidth: `${Math.round(zoomLevel * 100)}%`,
+            }}
+          />
+        </div>
+      </div>
 
       {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center p-12 bg-gray-50 rounded-lg">
+        <div className="absolute inset-x-0 top-12 bottom-0 flex items-center justify-center rounded-lg bg-gray-50 p-12">
           <div className="text-center">
             <svg
               className="animate-spin h-8 w-8 text-blue-600 mx-auto mb-2"
@@ -107,7 +157,7 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({ code, className 
       )}
 
       {error && !isLoading && (
-        <div className="absolute inset-0 p-6 bg-red-50 border border-red-200 rounded-lg">
+        <div className="absolute inset-x-0 top-12 bottom-0 rounded-lg border border-red-200 bg-red-50 p-6">
           <div className="flex items-start">
             <svg
               className="w-5 h-5 text-red-500 mr-2 mt-0.5"

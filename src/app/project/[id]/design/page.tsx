@@ -1,23 +1,138 @@
 'use client';
 
-import dynamic from 'next/dynamic';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Loading, LoadingPage } from '@/components/ui/loading';
+import { MermaidDiagram } from '@/components/visualization/mermaid-diagram';
 import { ArchitectureOption, Component, Justification, Project } from '@/types';
 import { deriveProjectTitle, slugifyProjectTitle } from '@/lib/utils';
 
-const MermaidDiagram = dynamic(
-  () => import('@/components/visualization/mermaid-diagram').then((module) => module.MermaidDiagram),
-  {
-    ssr: false,
-    loading: () => <Loading text="Loading diagram..." />,
-  }
-);
-
 type DesignTab = 'overview' | 'justifications' | 'implementation-guide';
+
+function formatDiagramTypeLabel(componentType: Component['type']): string {
+  return componentType.charAt(0).toUpperCase() + componentType.slice(1);
+}
+
+function formatNaturalList(items: string[]): string {
+  if (items.length === 0) {
+    return '';
+  }
+
+  if (items.length === 1) {
+    return items[0];
+  }
+
+  if (items.length === 2) {
+    return `${items[0]} and ${items[1]}`;
+  }
+
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+function lowerCaseFirst(text: string): string {
+  if (!text) {
+    return text;
+  }
+
+  return `${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+}
+
+function trimTrailingPeriod(text: string): string {
+  return text.trim().replace(/[.\s]+$/, '');
+}
+
+function toSentence(text: string): string {
+  const trimmedText = trimTrailingPeriod(text);
+  if (!trimmedText) {
+    return '';
+  }
+
+  return `${trimmedText.charAt(0).toUpperCase()}${trimmedText.slice(1)}.`;
+}
+
+function createTechnologySentence(componentName: string, technologies: string[]): string {
+  if (technologies.length === 0) {
+    return '';
+  }
+
+  const technologyList = formatNaturalList(technologies);
+  const sentencePatterns = [
+    `${componentName} is powered by ${technologyList}.`,
+    `${technologyList} provides the technology behind this block.`,
+    `This part of the system is built with ${technologyList}.`,
+  ];
+
+  return sentencePatterns[componentName.length % sentencePatterns.length];
+}
+
+function createFlowSentence(inputs: string[], outputs: string[]): string {
+  if (inputs.length > 0 && outputs.length > 0) {
+    const inputList = formatNaturalList(inputs);
+    const outputList = formatNaturalList(outputs);
+    const sentencePatterns = [
+      `It receives requests or data from ${inputList} and passes the result to ${outputList}.`,
+      `In the overall flow, it connects ${inputList} to ${outputList}.`,
+      `This block sits between ${inputList} and ${outputList}, moving work from one side to the other.`,
+    ];
+
+    return sentencePatterns[(inputs.length + outputs.length) % sentencePatterns.length];
+  }
+
+  if (inputs.length > 0) {
+    return `It is mainly fed by ${formatNaturalList(inputs)}.`;
+  }
+
+  if (outputs.length > 0) {
+    return `From here, the next step in the flow goes to ${formatNaturalList(outputs)}.`;
+  }
+
+  return '';
+}
+
+function createResponsibilitiesSentence(componentName: string, responsibilities: string[]): string {
+  if (responsibilities.length === 0) {
+    return '';
+  }
+
+  const responsibilityList = formatNaturalList(responsibilities.map((responsibility) => responsibility.toLowerCase()));
+  const sentencePatterns = [
+    `Its main responsibilities are ${responsibilityList}.`,
+    `Most of the work in this block centers on ${responsibilityList}.`,
+    `${componentName} is responsible for ${responsibilityList}.`,
+  ];
+
+  return sentencePatterns[responsibilities.length % sentencePatterns.length];
+}
+
+function buildDiagramExplanation(component: Component): string {
+  const description = trimTrailingPeriod(component.description);
+  const beginnerExplanation = trimTrailingPeriod(component.beginnerExplanation ?? '');
+  const responsibilities = component.responsibilities.filter(Boolean);
+  const inputs = component.inputFrom?.filter(Boolean) ?? [];
+  const outputs = component.outputTo?.filter(Boolean) ?? [];
+  const technologies = component.technologies.filter(Boolean);
+  const explanationParts: string[] = [];
+
+  const primaryExplanation = beginnerExplanation.length > description.length
+    ? beginnerExplanation
+    : description;
+
+  if (primaryExplanation) {
+    explanationParts.push(toSentence(primaryExplanation));
+  }
+
+  explanationParts.push(createTechnologySentence(component.name, technologies));
+  explanationParts.push(createFlowSentence(inputs, outputs));
+  explanationParts.push(createResponsibilitiesSentence(component.name, responsibilities));
+
+  return explanationParts.filter(Boolean).join(' ');
+}
+
+function normalizeDiagramRole(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
 
 export default function DesignPage() {
   const router = useRouter();
@@ -232,10 +347,10 @@ export default function DesignPage() {
       {/* Overview Tab */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,1fr)]">
+          <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,1fr)]">
             {/* System Diagram */}
             {architecture.diagram && (
-              <Card>
+              <Card className="h-full xl:h-[calc(70vh+9rem)]">
                 <CardHeader>
                   <CardTitle>System Architecture Diagram</CardTitle>
                 </CardHeader>
@@ -245,40 +360,68 @@ export default function DesignPage() {
               </Card>
             )}
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Key Components</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {isLoadingComponents && components.length === 0 ? (
-                  <Loading text="Loading components..." />
-                ) : components.length === 0 ? (
-                  <p className="text-sm text-gray-600">Component breakdown is not available yet.</p>
-                ) : (
-                  <div className="space-y-4">
-                    {components.map((component, index) => (
-                      <div key={index} className="rounded-lg border border-gray-100 bg-gray-50 p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <h4 className="font-semibold text-gray-900">{component.name}</h4>
-                            <p className="mt-1 text-sm text-gray-600">{component.description}</p>
-                          </div>
-                          <span className="rounded-full bg-white px-2.5 py-1 text-xs text-gray-600 border border-gray-200">
-                            {component.type}
-                          </span>
-                        </div>
+            <div className="flex h-full min-h-0 flex-col gap-6 xl:h-[calc(70vh+9rem)]">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Architecture Overview</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4 text-sm text-gray-700">
+                    <p className="leading-7 text-gray-600">{architecture.overview}</p>
 
-                        {component.dependencies.length > 0 && (
-                          <p className="mt-3 text-xs text-gray-500">
-                            Depends on: {component.dependencies.join(', ')}
-                          </p>
-                        )}
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Complexity</p>
+                        <p className="mt-1 font-semibold text-gray-900 capitalize">{architecture.complexity}</p>
                       </div>
-                    ))}
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Estimated Cost</p>
+                        <p className="mt-1 font-semibold text-gray-900 capitalize">{architecture.estimatedCost}</p>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 col-span-2 sm:col-span-1">
+                        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Tech Areas</p>
+                        <p className="mt-1 font-semibold text-gray-900">{Object.keys(architecture.techStack).length}</p>
+                      </div>
+                    </div>
                   </div>
-                )}
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+
+              <Card className="flex min-h-0 flex-1 flex-col">
+                <CardHeader>
+                  <CardTitle>Diargam explanation</CardTitle>
+                </CardHeader>
+                <CardContent className="min-h-0 flex-1 overflow-y-auto pr-2">
+                  {isLoadingComponents && components.length === 0 ? (
+                    <Loading text="Loading diagram explanation..." />
+                  ) : components.length === 0 ? (
+                    <p className="text-sm text-gray-600">A detailed explanation will appear after the component breakdown is available.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {components.map((component, index) => (
+                        <div key={`${component.id ?? component.name}-${index}`} className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h4 className="font-semibold text-gray-900">{component.name}</h4>
+                              <p className="mt-1 text-sm text-gray-600">{buildDiagramExplanation(component)}</p>
+                            </div>
+                            <span className="rounded-full bg-white px-2.5 py-1 text-xs text-gray-600 border border-gray-200">
+                              {formatDiagramTypeLabel(component.type)}
+                            </span>
+                          </div>
+
+                          {component.dependencies.length > 0 && (
+                            <p className="mt-3 text-xs text-gray-500">
+                              Depends on: {component.dependencies.join(', ')}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </div>
           
           {/* Tech Stack */}

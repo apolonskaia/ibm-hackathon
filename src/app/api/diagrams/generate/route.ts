@@ -48,11 +48,13 @@ export async function POST(request: NextRequest) {
     }
     
     // Generate diagram using watsonx.ai
-    const mermaidCode = await generateMermaidDiagram(
-      architecture.name,
-      componentList,
-      architecture.overview
-    );
+    const mermaidCode = await generateMermaidDiagram({
+      architectureName: architecture.name,
+      description: architecture.description,
+      overview: architecture.overview,
+      techStack: architecture.techStack,
+      components: componentList,
+    });
     
     // Create diagram object
     const diagram = {
