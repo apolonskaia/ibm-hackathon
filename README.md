@@ -28,7 +28,6 @@ graph TB
 
 	API --> Watson[IBM watsonx.ai]
 	API --> DB[(SQLite Database)]
-	<!-- API --> Cache[Response Cache] -->
 
 	Watson --> Clarify[Clarification Engine]
 	Watson --> ArchGen[Architecture Generator]
@@ -36,10 +35,8 @@ graph TB
 	Watson --> DiagGen[Diagram Generator]
 
 	UI --> Mermaid[Mermaid.js]
-	<!-- UI --> ReactFlow[React Flow] -->
 
 	API --> Export[Export System]
-	<!-- Export --> Files[File Storage] -->
 
 	style Watson fill:#0f62fe
 	style UI fill:#42be65
