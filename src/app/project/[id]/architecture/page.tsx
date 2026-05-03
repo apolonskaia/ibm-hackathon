@@ -152,6 +152,14 @@ export default function ArchitecturePage() {
 
     void loadOptions();
   }, [generateOptions, getPersistedVisibleCount, projectId, updateVisibleCount]);
+
+  useEffect(() => {
+    if (options.length === 0) {
+      return;
+    }
+
+    void router.prefetch(`/project/${projectId}/design`);
+  }, [options.length, projectId, router]);
   
   const handleSelectArchitecture = async (architectureId: string) => {
     setIsSelecting(true);
