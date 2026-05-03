@@ -19,6 +19,33 @@ This repository contains a Next.js application that turns a rough project idea i
 4. Select an option to open `/project/[id]/design`.
 5. Revisit saved work at `/history`.
 
+## 🏗️ Architecture
+
+```mermaid
+graph TB
+	User[User] --> UI[Next.js Frontend]
+	UI --> API[API Routes]
+
+	API --> Watson[IBM watsonx.ai]
+	API --> DB[(SQLite Database)]
+	<!-- API --> Cache[Response Cache] -->
+
+	Watson --> Clarify[Clarification Engine]
+	Watson --> ArchGen[Architecture Generator]
+	Watson --> Justify[Justification Module]
+	Watson --> DiagGen[Diagram Generator]
+
+	UI --> Mermaid[Mermaid.js]
+	<!-- UI --> ReactFlow[React Flow] -->
+
+	API --> Export[Export System]
+	<!-- Export --> Files[File Storage] -->
+
+	style Watson fill:#0f62fe
+	style UI fill:#42be65
+	style DB fill:#ff832b
+```
+
 ## Technology
 
 - Next.js 14 App Router
